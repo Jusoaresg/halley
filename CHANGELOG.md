@@ -61,7 +61,7 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
-- Restrict edge resizing to the rendered border width, or a two-pixel inward
+- Restrict edge resizing to the rendered border width, or a three-pixel inward
   strip on borderless windows, keeping nearby scrollbars and controls clickable.
 - Connect clipboard and primary-selection transfers between native Wayland and
   XWayland apps, including offer updates, clearing, and reading X11-owned data.

@@ -585,7 +585,7 @@ fn border_resize_band(border_width: i32) -> f64 {
     if border_width > 0 {
         f64::from(border_width)
     } else {
-        2.0
+        3.0
     }
 }
 
@@ -989,7 +989,7 @@ mod tests {
         for width in [0, 1, 2, 4, 12] {
             let frame = Rectangle::new((100, 100).into(), (300, 300).into());
             let band = super::border_resize_band(width);
-            let expected_band = if width == 0 { 2.0 } else { f64::from(width) };
+            let expected_band = if width == 0 { 3.0 } else { f64::from(width) };
             assert_eq!(band, expected_band);
             assert_eq!(
                 decoration_hit_at(None, frame, Point::from((399.5, 250.0)), true, band),
