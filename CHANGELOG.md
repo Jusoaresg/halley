@@ -65,6 +65,10 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Restore TTY startup GPU fallback: try remaining GPUs when a device has no
+  connected display or cannot initialize an output, and log each attempted
+  device and failure. This fixes first-device-only startup on hybrid systems
+  whose usable display is attached to another GPU.
 - Keep keyboard action targeting on the selected monitor in hover mode, and
   move the pointer with successful monitor transfers without synthesizing hover
   focus changes. Active pointer grabs and constraints block transfers.
