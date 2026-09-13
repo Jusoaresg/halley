@@ -100,6 +100,8 @@ pub enum Action {
     FocusDirection(Direction),
     /// Move the focused or most-recent Field node by one placement step.
     MoveNode(Direction),
+    TransferWindow(Direction),
+    PanField(Direction),
     /// Resize the focused Field window by one placement step. Left and up
     /// shrink; right and down grow.
     ResizeWindow(Direction),
@@ -148,6 +150,7 @@ impl Action {
                 | Self::Trail(_)
                 | Self::FocusDirection(_)
                 | Self::MoveNode(_)
+                | Self::PanField(_)
                 | Self::ResizeWindow(_)
                 | Self::ClusterTileFocus(_)
                 | Self::ClusterTileSwap(_)
@@ -160,6 +163,8 @@ impl Action {
     pub fn default_scope(&self) -> BindingScope {
         match self {
             Self::MoveNode(_)
+            | Self::TransferWindow(_)
+            | Self::PanField(_)
             | Self::ResizeWindow(_)
             | Self::ToggleFocusedPin
             | Self::ArrangeVisible
@@ -207,10 +212,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn navigation_actions_have_distinct_repeat_and_default_policies() {
+        for direction in [Direction::Left, Direction::Right, Direction::Up, Direction::Down] {
+            let pan = Action::PanField(direction);
+            let transfer = Action::TransferWindow(direction);
+            assert!(pan.repeats_by_default());
+            assert!(!transfer.repeats_by_default());
+            assert_eq!(pan.default_scope(), BindingScope::Field);
+            assert!(Keybinds::default().binds.iter().any(|bind| bind.action == transfer));
+            assert!(!Keybinds::default().binds.iter().any(|bind| bind.action == pan));
+        }
+    }
+
+    #[test]
     fn default_matches_the_shipped_keybinds() {
         let kb = Keybinds::default();
         assert_eq!(kb.modifier, ModifierKey::Super);
-        assert_eq!(kb.binds.len(), 62);
+        assert_eq!(kb.binds.len(), 66);
 
         let previous = kb
             .binds

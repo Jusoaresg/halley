@@ -931,6 +931,13 @@ keybinds:
   "$var.mod+alt+up" "node-move up"
   "$var.mod+alt+down" "node-move down"
 
+
+  # Send the selected Field window to an adjacent monitor and follow it.
+  "$var.mod+alt+shift+left" "window-transfer left"
+  "$var.mod+alt+shift+right" "window-transfer right"
+  "$var.mod+alt+shift+up" "window-transfer up"
+  "$var.mod+alt+shift+down" "window-transfer down"
+
   # The same Mod+Ctrl+Arrow chords resize in the Field and reorder tiles in a
   # tiling cluster. Explicit non-overlapping scopes retain both bindings.
   "$var.mod+ctrl+left" "cluster-tile-swap-left" with scope "tile"

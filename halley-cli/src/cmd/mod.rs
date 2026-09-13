@@ -55,6 +55,9 @@ pub enum Action {
     },
     TrailHelp,
     MonitorFocus(MonitorTarget),
+    WindowTransfer(halley_api::Direction),
+    PanField(halley_api::Direction),
+    PanHelp,
     MonitorHelp,
     StackCycle {
         direction: StackCycleDirection,
@@ -121,6 +124,7 @@ pub fn parse(args: &[String]) -> Result<Action, String> {
         Some("cluster") => return cluster::parse(&args[1..]),
         Some("bearings") => return parse_bearings(&args[1..]),
         Some("trail") => return trail::parse(&args[1..]),
+        Some("pan") => return control::parse_pan(&args[1..]),
         Some("monitor") => return control::parse_monitor(&args[1..]),
         Some("stack") => return control::parse_stack(&args[1..]),
         Some("tile") => return control::parse_tile(&args[1..]),

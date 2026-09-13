@@ -102,6 +102,23 @@ const PRE_06_ASSIGNMENTS: &[&str] = &[
 /// into a template merge that floods a customized file with every new option.
 const VERSION_1_BINDINGS: &[BindingCandidate] = &[
     BindingCandidate {
+        name: "window-transfer left",
+        line: r#""$var.mod+alt+shift+left" "window-transfer left""#,
+    },
+    BindingCandidate {
+        name: "window-transfer right",
+        line: r#""$var.mod+alt+shift+right" "window-transfer right""#,
+    },
+    BindingCandidate {
+        name: "window-transfer up",
+        line: r#""$var.mod+alt+shift+up" "window-transfer up""#,
+    },
+    BindingCandidate {
+        name: "window-transfer down",
+        line: r#""$var.mod+alt+shift+down" "window-transfer down""#,
+    },
+
+    BindingCandidate {
         name: "pin focused Field node",
         line: r#""$var.mod+p" "toggle-focused-pin""#,
     },
@@ -1069,6 +1086,19 @@ mod tests {
         );
         assert!(updated.contains("\"$var.mod+p\" \"notify-send custom\""));
         assert!(!updated.contains("\"$var.mod+p\" \"toggle-focused-pin\""));
+    }
+
+    #[test]
+    fn transfer_migration_preserves_custom_chords_and_leaves_pan_unbound() {
+        let scratch = ScratchDir::new("transfer-conflict");
+        let path = scratch.config();
+        fs::write(&path, minimal("  \"$var.mod+alt+shift+left\" \"custom-command\"\n")).unwrap();
+        let report = migrate_config_at(&path, false).unwrap();
+        let updated = fs::read_to_string(&path).unwrap();
+        assert!(report.skipped.iter().any(|item| item.contains("window-transfer left")));
+        assert!(updated.contains("window-transfer right"));
+        assert!(!updated.contains("pan-field left"));
+        assert_eq!(migrate_config_at(&path, false).unwrap().status, MigrationStatus::UpToDate);
     }
 
     #[test]

@@ -717,6 +717,18 @@ fn handle_control_request<D: crate::session::SessionDriver>(
         halley_ipc::ControlDirection::Down => halley_config::Direction::Down,
     };
     let (action, output) = match request {
+        halley_ipc::ControlRequest::WindowTransfer(value) => {
+            return match crate::nodes::transfer_window(session, direction(value)) {
+                Ok(()) => halley_ipc::Response::Ack,
+                Err(message) => api_error(halley_ipc::ServerErrorKind::InvalidRequest, message),
+            };
+        }
+        halley_ipc::ControlRequest::PanField(value) => {
+            return match crate::nodes::pan_field(session, direction(value)) {
+                Ok(()) => halley_ipc::Response::Ack,
+                Err(message) => api_error(halley_ipc::ServerErrorKind::InvalidRequest, message),
+            };
+        }
         halley_ipc::ControlRequest::MonitorFocus(target) => {
             let target = match target {
                 halley_ipc::MonitorFocusTarget::Direction(value) => {

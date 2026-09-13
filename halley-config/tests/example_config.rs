@@ -18,7 +18,7 @@ fn example_config_parses_end_to_end() {
     let keybinds = parse_keybinds(&config).expect("example keybinds section parses");
 
     assert_eq!(keybinds.modifier, ModifierKey::Super);
-    assert_eq!(keybinds.binds.len(), 62);
+    assert_eq!(keybinds.binds.len(), 66);
 
     let arrange = keybinds
         .binds

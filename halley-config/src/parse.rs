@@ -113,6 +113,16 @@ pub(crate) fn parse_action(s: &str) -> Action {
     {
         return Action::FocusDirection(direction);
     }
+    if let ["window-transfer", direction] = words.as_slice()
+        && let Some(direction) = parse_direction(direction)
+    {
+        return Action::TransferWindow(direction);
+    }
+    if let ["pan-field", direction] = words.as_slice()
+        && let Some(direction) = parse_direction(direction)
+    {
+        return Action::PanField(direction);
+    }
     if let ["node", "move", direction] | ["node-move", direction] | ["move", direction] =
         words.as_slice()
         && let Some(direction) = parse_direction(direction)

@@ -10,7 +10,8 @@ Commands:
   cluster        List, inspect, switch, or change cluster workspaces
   bearings       Show, hide, toggle, or inspect Bearings
   trail          Navigate or inspect per-monitor focus history
-  monitor        Focus a directional or exactly named monitor
+  pan            Pan the selected Field: left|right|up|down
+  monitor        Focus a monitor or transfer the selected Field window
   stack          Cycle an active stacking cluster
   tile           Focus or swap cluster tiles
   portal         Inspect the desktop portal backend
@@ -102,6 +103,7 @@ Selectors:
 pub const MONITOR_HELP: &str = "\
 Usage:
   halleyctl monitor focus left|right|up|down|OUTPUT
+  halleyctl monitor transfer left|right|up|down
 ";
 
 pub const STACK_HELP: &str = "\

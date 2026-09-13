@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Add `Super+Alt+Shift+Arrow` Field window transfers between monitors, with
+  bootstrap defaults, examples, and conflict-aware configuration migration.
+- Add optional directional `pan-field` keyboard actions without default binds,
+  plus `halleyctl pan` and `halleyctl monitor transfer` scripting commands.
 - Add `animations.node.collapse-duration-ms` (280 ms by default) for the window
   snapshot shrinking and traveling into a node, independent of marker appearance
   and ordinary window-close/custom-shader duration. Manual `Mod+N` collapse and

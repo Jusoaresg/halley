@@ -252,7 +252,7 @@ pub(crate) fn reconcile_landmarks_for_zoom<D: crate::session::SessionDriver>(
     changed
 }
 
-fn apply_dynamics_positions<D: crate::session::SessionDriver>(
+pub(super) fn apply_dynamics_positions<D: crate::session::SessionDriver>(
     session: &mut crate::session::Session<D>,
     positions: HashMap<NodeId, Vec2>,
     authority: Option<NodeId>,

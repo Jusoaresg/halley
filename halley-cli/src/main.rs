@@ -122,6 +122,15 @@ fn main() -> ExitCode {
             }
         }),
         Ok(Action::TrailHelp) => show(help::TRAIL_HELP),
+        Ok(Action::WindowTransfer(direction)) => with_client(|client| {
+            client.transfer_window(direction)?;
+            Ok(ExitCode::SUCCESS)
+        }),
+        Ok(Action::PanHelp) => show("Usage: halleyctl pan left|right|up|down\n"),
+        Ok(Action::PanField(direction)) => with_client(|client| {
+            client.pan_field(direction)?;
+            Ok(ExitCode::SUCCESS)
+        }),
         Ok(Action::MonitorFocus(target)) => with_client(|client| {
             client.focus_monitor(target)?;
             Ok(ExitCode::SUCCESS)

@@ -80,6 +80,10 @@ autostart:
 end
 
 keybinds:
+  "$var.mod+alt+shift+left" "window-transfer left"
+  "$var.mod+alt+shift+right" "window-transfer right"
+  "$var.mod+alt+shift+up" "window-transfer up"
+  "$var.mod+alt+shift+down" "window-transfer down"
   # Exact-side values such as "left-super" and "right-alt" are also valid.
   mod "super"
 

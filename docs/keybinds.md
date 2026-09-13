@@ -381,3 +381,35 @@ Inside an active cluster workspace, field maximize and fullscreen temporarily
 promote only the selected member above the desktop and cover every sibling,
 floating window, node, and cluster overlay behind it. On exit, the window eases
 back to its current tile and rejoins the cluster at its original stack slot.
+
+## Keyboard Field panning and monitor transfer
+
+`window-transfer left|right|up|down` sends the selected Field window to the
+adjacent physical monitor and follows it. Defaults are `Super+Alt+Shift+Arrow`.
+The destination is centered in that monitor's current Field view; window size
+and collapsed state are preserved. Both monitors must show the Field. Cluster
+members, fullscreen and maximized windows are excluded; restore those first.
+If no adjacent monitor exists, nothing moves. The selected monitor, rather
+than the pointer position, determines which Field is used.
+
+`pan-field left|right|up|down` pans the selected monitor's Field by ten percent
+of the current view width or height per activation. Right reveals space to the
+right, and down reveals space below. Held keyboard bindings repeat using the
+configured keyboard repeat settings; camera easing follows the queued target.
+Window geometry and keyboard focus do not change. Fullscreen, maximize, and
+active cluster views block Field panning.
+
+Panning actions intentionally have no default bindings and are not added by
+migration. Assign them to your preferred chords; existing default bindings are
+preserved. Bare `pan-field` remains the pointer-drag action.
+
+Scripting uses the same operations and returns an error when unavailable:
+
+```sh
+halleyctl monitor transfer right
+halleyctl pan left
+```
+
+The client API exposes `transfer_window(direction)` and `pan_field(direction)`.
+Transfer bindings are included in new configs; existing configs can receive
+unoccupied bindings through `halleyctl config migrate`.

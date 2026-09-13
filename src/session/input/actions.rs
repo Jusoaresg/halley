@@ -292,6 +292,16 @@ pub(crate) fn dispatch<D: SessionDriver>(
                 }
             }
         }
+        super::super::SessionControl::TransferWindow(direction) => {
+            if let Err(error) = crate::nodes::transfer_window(session, direction) {
+                eventline::debug!("window transfer: {error}");
+            }
+        }
+        super::super::SessionControl::PanField(direction) => {
+            if let Err(error) = crate::nodes::pan_field(session, direction) {
+                eventline::debug!("pan field: {error}");
+            }
+        }
         super::super::SessionControl::MoveNode(direction) => {
             if let Some(output) = action_output
                 && session.clusters.active_on(&output).is_none()
