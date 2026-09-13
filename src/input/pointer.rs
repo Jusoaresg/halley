@@ -523,7 +523,7 @@ fn window_under(
                 outer,
                 screen_location,
                 border_resize_allowed,
-                f64::from(border_width.max(8)),
+                border_resize_band(border_width),
             ) {
                 return Some(PointerRoute {
                     output: output.clone(),
@@ -577,6 +577,16 @@ fn visual_bounds_required(hit_kind: WindowHitKind, is_x11: bool) -> bool {
     // override-redirect windows are independent surfaces. Retain this bounds
     // gate as well as their surface-local input-region check below.
     hit_kind == WindowHitKind::Any || is_x11
+}
+
+// Visible borders own their exact rendered width; borderless windows reserve
+// only a narrow content edge so nearby client controls remain clickable.
+fn border_resize_band(border_width: i32) -> f64 {
+    if border_width > 0 {
+        f64::from(border_width)
+    } else {
+        2.0
+    }
 }
 
 const TITLEBAR_CONTROL_RESIZE_BAND: f64 = 8.0;
@@ -968,6 +978,29 @@ mod tests {
                 crate::titlebar::Control::Close
             ))
         );
+    }
+
+    #[test]
+    fn resize_band_preserves_content_next_to_thin_and_missing_borders() {
+        use crate::input::grab::ResizeHandle;
+        use crate::titlebar::Hit;
+        use smithay::utils::{Point, Rectangle};
+
+        for width in [0, 1, 2, 4, 12] {
+            let frame = Rectangle::new((100, 100).into(), (300, 300).into());
+            let band = super::border_resize_band(width);
+            let expected_band = if width == 0 { 2.0 } else { f64::from(width) };
+            assert_eq!(band, expected_band);
+            assert_eq!(
+                decoration_hit_at(None, frame, Point::from((399.5, 250.0)), true, band),
+                Some(Hit::Resize(ResizeHandle::Right)),
+            );
+            assert_eq!(
+                decoration_hit_at(None, frame, Point::from((400.0 - expected_band - 0.5, 250.0)), true, band),
+                None,
+                "client input beyond the border must remain available (width={width})",
+            );
+        }
     }
 
     #[test]
