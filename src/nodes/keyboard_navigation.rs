@@ -65,6 +65,9 @@ pub(crate) fn transfer_window<D: crate::session::SessionDriver>(
     session: &mut crate::session::Session<D>,
     direction: halley_config::Direction,
 ) -> Result<(), String> {
+    if !crate::session::pointer::transfer_pointer_available(session) {
+        return Err("finish the pointer drag or unlock the pointer before transferring".into());
+    }
     let source = selected(session)?;
     session.nodes.sync_from_space(&session.wayland.space);
     let id = session
@@ -119,6 +122,10 @@ pub(crate) fn transfer_window<D: crate::session::SessionDriver>(
     } else {
         crate::nodes::focus_or_reveal_node(session, id, serial, true);
     }
+    crate::session::pointer::warp_after_transfer(session, (
+        geometry.loc.x as f64 + geometry.size.w as f64 * 0.5,
+        geometry.loc.y as f64 + geometry.size.h as f64 * 0.5,
+    ));
     session.request_redraw();
     Ok(())
 }

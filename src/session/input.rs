@@ -249,16 +249,7 @@ pub(super) fn keyboard_binding_context<D: SessionDriver>(
 ) -> crate::input::BindingContext {
     let selected =
         crate::wayland::focus::selected_output(&session.wayland).map(|output| output.name());
-    let pointer = session
-        .wayland
-        .space
-        .output_under(session.pointer.position())
-        .next()
-        .map(|output| output.name());
-    let output = match session.settings.input.focus_mode {
-        halley_config::FocusMode::Click => selected,
-        halley_config::FocusMode::Hover => pointer.or(selected),
-    };
+    let output = selected;
     binding_context_for_output(session, output.as_deref())
 }
 
@@ -4139,17 +4130,25 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_actions_ignore_stationary_pointer_in_both_focus_modes() {
+        for mode in [halley_config::FocusMode::Hover, halley_config::FocusMode::Click] {
+            assert_eq!(window_action_output(super::actions::DispatchOrigin::Keyboard, mode, Some("left"), Some("right")), Some("right".into()));
+            assert_eq!(window_action_output(super::actions::DispatchOrigin::Keyboard, mode, Some("left"), None), None);
+        }
+    }
+
+    #[test]
     fn window_actions_follow_pointer_only_in_hover_mode() {
         assert_eq!(
-            window_action_output(halley_config::FocusMode::Hover, Some("right"), Some("left"),),
+            window_action_output(super::actions::DispatchOrigin::Other, halley_config::FocusMode::Hover, Some("right"), Some("left"),),
             Some("right".to_string())
         );
         assert_eq!(
-            window_action_output(halley_config::FocusMode::Click, Some("right"), Some("left"),),
+            window_action_output(super::actions::DispatchOrigin::Other, halley_config::FocusMode::Click, Some("right"), Some("left"),),
             Some("left".to_string())
         );
         assert_eq!(
-            window_action_output(halley_config::FocusMode::Hover, None, Some("left")),
+            window_action_output(super::actions::DispatchOrigin::Other, halley_config::FocusMode::Hover, None, Some("left")),
             Some("left".to_string())
         );
     }

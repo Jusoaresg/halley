@@ -413,3 +413,10 @@ halleyctl pan left
 The client API exposes `transfer_window(direction)` and `pan_field(direction)`.
 Transfer bindings are included in new configs; existing configs can receive
 unoccupied bindings through `halleyctl config migrate`.
+
+Keyboard actions and binding scopes follow the selected monitor even in hover
+focus mode. Successful window transfers move the pointer to the transferred
+window at the destination view center. Warps do not synthesize hover focus;
+physical mouse movement resumes normal hover selection. Transfers are blocked
+while a pointer grab, lock, or confinement is active. Failed transfers do not
+move the pointer. Keyboard panning alone never warps the pointer.

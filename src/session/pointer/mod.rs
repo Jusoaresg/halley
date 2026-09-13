@@ -908,3 +908,18 @@ mod tests {
         assert!(!cursor_presentation_visible(false, false));
     }
 }
+
+/// Transfer handoffs must not interrupt an existing drag or constrained pointer.
+pub(crate) fn transfer_pointer_available<D: SessionDriver>(session: &Session<D>) -> bool {
+    matches!(session.interactions.grab, crate::input::grab::Grab::None)
+        && !session.seat.get_pointer().is_some_and(|pointer| pointer.is_grabbed())
+        && !has_active_constraint(session)
+}
+
+/// Refresh pointer delivery without treating a compositor warp as hover input.
+pub(crate) fn warp_after_transfer<D: SessionDriver>(session: &mut Session<D>, position: (f64, f64)) {
+    session.pointer.set_position(position);
+    session.cursor_policy.pointer_activity();
+    update_client_state(session, session.start_time.elapsed().as_millis() as u32);
+    session.request_redraw();
+}

@@ -65,6 +65,9 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Keep keyboard action targeting on the selected monitor in hover mode, and
+  move the pointer with successful monitor transfers without synthesizing hover
+  focus changes. Active pointer grabs and constraints block transfers.
 - Restrict edge resizing to the rendered border width, or a three-pixel inward
   strip on borderless windows, keeping nearby scrollbars and controls clickable.
 - Connect clipboard and primary-selection transfers between native Wayland and

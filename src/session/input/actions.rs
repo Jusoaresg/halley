@@ -30,10 +30,14 @@ fn action_hides_cursor_for_keyboard_navigation(action: &halley_config::Action) -
 }
 
 pub(super) fn window_action_output(
+    origin: DispatchOrigin,
     focus_mode: halley_config::FocusMode,
     pointer_output: Option<&str>,
     selected_output: Option<&str>,
 ) -> Option<String> {
+    if origin == DispatchOrigin::Keyboard {
+        return selected_output.map(str::to_owned);
+    }
     match focus_mode {
         halley_config::FocusMode::Hover => pointer_output.or(selected_output).map(str::to_owned),
         halley_config::FocusMode::Click => selected_output.map(str::to_owned),
@@ -189,10 +193,16 @@ pub(crate) fn dispatch<D: SessionDriver>(
     let selected_output =
         crate::wayland::focus::selected_output(&session.wayland).map(Output::name);
     let action_output = window_action_output(
+        origin,
         session.settings.input.focus_mode,
         output_name,
         selected_output.as_deref(),
     );
+    let output_name = if origin == DispatchOrigin::Keyboard {
+        selected_output.as_deref()
+    } else {
+        output_name
+    };
     let x11_display = session.xwayland.display_name();
     let cluster_blocks_zoom = output_name.is_some_and(|name| {
         cluster_blocks_zoom(&action, session.clusters.active_on(name).is_some())
