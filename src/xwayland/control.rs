@@ -281,9 +281,11 @@ impl X11Control {
         // native Wayland surface is focused, distinguishing it from a transient
         // state where no surface has focus.
         if let Some(focus_sink) = focus_sink_for_active_window(window, self.focus_sink) {
+            // Queue focus without a checked round trip. Xwayland may be
+            // servicing a client grab during popup movement; waiting for its
+            // confirmation here stalls the compositor that must deliver input.
             self.connection
-                .set_input_focus(InputFocus::NONE, focus_sink, CURRENT_TIME)?
-                .check()?;
+                .set_input_focus(InputFocus::NONE, focus_sink, CURRENT_TIME)?;
         }
         self.connection.flush()?;
         Ok(())
@@ -292,13 +294,12 @@ impl X11Control {
     /// Gives a globally-active client deterministic core X focus.
     ///
     /// Smithay sends `WM_TAKE_FOCUS` for these clients but otherwise waits for
-    /// them to focus themselves. Xwayland-satellite instead performs a checked
-    /// `SetInputFocus`; doing the same here prevents a following pointer enter
-    /// from racing Wine's fullscreen grab setup.
+    /// them to focus themselves. Queue `SetInputFocus` explicitly, preserving
+    /// X11 request ordering without waiting for server confirmation on the
+    /// compositor thread.
     pub fn focus_window(&self, window: Window) -> Result<(), Box<dyn Error>> {
         self.connection
-            .set_input_focus(InputFocus::NONE, window, CURRENT_TIME)?
-            .check()?;
+            .set_input_focus(InputFocus::NONE, window, CURRENT_TIME)?;
         self.connection.flush()?;
         Ok(())
     }

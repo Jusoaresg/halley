@@ -65,6 +65,10 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Avoid blocking X11 focus-confirmation round trips on the compositor thread,
+  which could freeze desktop input and rendering while dragging client-managed
+  popups such as the ChatGPT voice bubble. Focus requests remain ordered and
+  are flushed without waiting for server confirmation.
 - Restore TTY startup GPU fallback: try remaining GPUs when a device has no
   connected display or cannot initialize an output, and log each attempted
   device and failure. This fixes first-device-only startup on hybrid systems
