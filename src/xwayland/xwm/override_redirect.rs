@@ -391,20 +391,6 @@ pub(super) fn override_redirect_source_location<D: SessionDriver>(
                 now,
             )
         })
-        .or_else(|| {
-            let output = resolution.output.as_ref()?;
-            let output_geometry = session.wayland.space.output_geometry(output)?;
-            let camera = session.cameras.get(&output.name())?;
-            let world = crate::input::grab::screen_to_world_on_output(
-                (f64::from(root_screen.x), f64::from(root_screen.y)),
-                camera,
-                output_geometry,
-            );
-            Some(Point::from((
-                world.x.round() as i32,
-                world.y.round() as i32,
-            )))
-        })
         .unwrap_or(root_screen);
     source_root + window.geometry().loc
 }

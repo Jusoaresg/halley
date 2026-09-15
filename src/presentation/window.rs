@@ -277,6 +277,16 @@ pub(crate) fn window_visual_state_with_cluster_presentation(
             (Some(rect.to_physical(1)), Some(depth), alpha)
         }
     };
+    // Unparented override-redirect surfaces are positioned by the X11 client
+    // in root-screen coordinates. Keep their size and position independent of
+    // the Field camera; attached menus still inherit their owner's transform.
+    let cluster_rect = standalone_x11_screen_rect(
+        crate::xwayland::is_override_redirect(window),
+        crate::wayland::window_presentation_owner(window).is_some(),
+        source_geometry,
+        output_geometry.loc,
+    )
+    .or(cluster_rect);
     let mut camera_rect = output_local_or_field_rect(
         cluster_rect,
         source_geometry,
@@ -1124,5 +1134,48 @@ mod tests {
             "the old camera box must actually slide a corner menu"
         );
         assert_eq!(kept.loc, requested.loc);
+    }
+}
+
+fn standalone_x11_screen_rect(
+    override_redirect: bool,
+    has_owner: bool,
+    geometry: Rectangle<i32, Logical>,
+    output_origin: Point<i32, Logical>,
+) -> Option<Rectangle<i32, Physical>> {
+    (override_redirect && !has_owner).then(|| {
+        Rectangle::new(
+            (geometry.loc - output_origin).to_physical(1),
+            geometry.size.to_physical(1),
+        )
+    })
+}
+
+#[cfg(test)]
+mod standalone_popup_tests {
+    use super::*;
+    #[test]
+    fn standalone_popup_keeps_screen_geometry_across_output_origins() {
+        let rect = Rectangle::new((2500, -300).into(), (772, 2849).into());
+        for origin in [Point::from((0, 0)), Point::from((2560, 0))] {
+            let local = standalone_x11_screen_rect(true, false, rect, origin).unwrap();
+            for zoom in [0.25, 0.5, 1.0, 2.0] {
+                let rendered = output_local_or_field_rect(
+                    Some(local),
+                    rect,
+                    Point::from((8000.0, -2000.0)),
+                    (2560, 1440).into(),
+                    zoom,
+                );
+                assert_eq!(rendered, local);
+                assert_eq!(rendered.size, rect.size.to_physical(1));
+            }
+        }
+    }
+    #[test]
+    fn managed_windows_and_attached_popups_keep_existing_transforms() {
+        let rect = Rectangle::new((100, 200).into(), (400, 300).into());
+        assert!(standalone_x11_screen_rect(false, false, rect, (0, 0).into()).is_none());
+        assert!(standalone_x11_screen_rect(true, true, rect, (0, 0).into()).is_none());
     }
 }

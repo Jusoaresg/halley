@@ -65,6 +65,9 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Keep standalone X11 override-redirect pop-outs in screen coordinates when
+  the Field is panned or zoomed, preserving client-controlled size and drag
+  positions. Parent-attached popups continue to follow their owner.
 - Avoid blocking X11 focus-confirmation round trips on the compositor thread,
   which could freeze desktop input and rendering while dragging client-managed
   popups such as the ChatGPT voice bubble. Focus requests remain ordered and
