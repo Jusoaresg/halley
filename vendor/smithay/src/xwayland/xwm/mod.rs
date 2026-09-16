@@ -1339,23 +1339,8 @@ where
 {
     let xwm = state.xwm_state(xwm_id);
     if xwm.initializing_window {
-        // An unrelated window's initial property queries must not stall an
-        // already-published window's geometry used for pointer coordinates.
-        // Preserve ordering if this window still has an older queued configure.
-        let live_geometry = match &event {
-            Event::ConfigureNotify(configure) => {
-                xwm.windows.iter().any(|surface| surface.window_id() == configure.window && surface.is_override_redirect())
-                    && !xwm.deferred_events.iter().any(|queued| {
-                        matches!(queued, Event::ConfigureNotify(previous)
-                            if previous.window == configure.window)
-                    })
-            }
-            _ => false,
-        };
-        if !live_geometry {
-            xwm.deferred_events.push_back(event);
-            return Ok(());
-        }
+        xwm.deferred_events.push_back(event);
+        return Ok(());
     }
     handle_event(loop_handle, dh, state, xwm_id, event)
 }

@@ -68,8 +68,6 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
-- Keep existing X11 pop-out geometry current while unrelated windows initialize,
-  avoiding an extra source of stale coordinates during client-controlled dragging.
 
 - Suppress synthetic X11 raw mouse motion when refreshing pointer coordinates
   after a window moves, while preserving physical relative mouse input.
