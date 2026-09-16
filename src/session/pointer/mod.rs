@@ -259,26 +259,19 @@ pub(super) fn relative_motion_allowed<D: SessionDriver>(
     xwayland_relative_motion_allowed(routed_is_x11, routed_is_immersive, foreign_immersive_x11)
 }
 
-/// Xwayland coalesces absolute and relative pointer events until the frame.
-/// An unpaired absolute update becomes raw motion, even when it only repairs
-/// local coordinates after a client moved its window. Pair every X11 absolute
-/// update with zero relative motion to suppress that synthetic raw movement.
-/// Physical input replaces this zero with its real delta later in the same
-/// frame; the existing relative-input policy still governs that delivery.
+/// Xwayland coalesces `wl_pointer.motion` and relative-pointer motion until the
+/// pointer frame. When absolute motion arrives alone it emits XI_RawMotion from
+/// its absolute device; Wine games can consume that even while another X11
+/// window owns focus. Pair the absolute update with a zero relative delta so
+/// Xwayland marks the absolute half `POINTER_NORAW` while Steam still receives
+/// its normal core pointer motion.
 fn pair_xwayland_ui_absolute_motion<D: SessionDriver>(
     session: &mut Session<D>,
     pointer: &PointerHandle<Session<D>>,
     route: &crate::input::pointer::PointerRoute,
     time: u32,
 ) {
-    let is_x11 = match &route.target {
-        crate::input::pointer::PointerTarget::Window(window)
-        | crate::input::pointer::PointerTarget::Decoration { window, .. } => {
-            crate::xwayland::is_x11(window)
-        }
-        _ => false,
-    };
-    if !is_x11 {
+    if relative_motion_allowed(session, Some(route)) {
         return;
     }
     let Some(focus) = route.focus.clone() else {

@@ -69,9 +69,6 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- Suppress synthetic X11 raw mouse motion when refreshing pointer coordinates
-  after a window moves, while preserving physical relative mouse input.
-
 - Initialize new X11 window properties off the compositor thread, preserving
   X11 event order while slow property replies no longer block input and rendering.
 - Keep standalone X11 override-redirect pop-outs in screen coordinates when
