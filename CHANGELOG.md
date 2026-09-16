@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Allow modifier-dragging standalone X11 normal/utility pop-outs in screen
   coordinates, without sending the drag to the app. Attached popups, menus, and
-  tooltips remain client-managed.
+  tooltips remain client-managed. Ordinary app-controlled dragging is unchanged.
 - Add `Super+Alt+Shift+Arrow` Field window transfers between monitors, with
   bootstrap defaults, examples, and conflict-aware configuration migration.
 - Add optional directional `pan-field` keyboard actions without default binds,
@@ -72,8 +72,8 @@ All notable changes to this project will be documented in this file.
 - Initialize new X11 window properties off the compositor thread, preserving
   X11 event order while slow property replies no longer block input and rendering.
 - Keep standalone X11 override-redirect pop-outs in screen coordinates when
-  the Field is panned or zoomed, preserving client-controlled size and drag
-  positions. Parent-attached popups continue to follow their owner.
+  the Field is panned or zoomed, preserving their native size and screen placement.
+  Parent-attached popups continue to follow their owner.
 - Avoid blocking X11 focus-confirmation round trips on the compositor thread,
   which could freeze desktop input and rendering while dragging client-managed
   popups such as the ChatGPT voice bubble. Focus requests remain ordered and
