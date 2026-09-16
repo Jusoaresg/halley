@@ -77,6 +77,18 @@ fn compositor_chrome_visible(logical_fullscreen: bool, x11_fullscreen: bool) -> 
     !logical_fullscreen && !x11_fullscreen
 }
 
+/// Window-rule opacity fades client pixels. Compositor chrome stays on the
+/// opening/cluster fade only, matching niri's split.
+fn window_content_and_chrome_alpha(
+    opening_alpha: f32,
+    rule_opacity: f32,
+    chrome_visible: bool,
+) -> (f32, f32) {
+    let content_alpha = opening_alpha * rule_opacity;
+    let chrome_alpha = if chrome_visible { opening_alpha } else { 0.0 };
+    (content_alpha, chrome_alpha)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn opening_shader_elements(
     renderer: &mut GlesRenderer,
@@ -305,7 +317,6 @@ pub(super) fn live_window_elements(
     } else {
         1.0
     };
-    let alpha = visual.opening_alpha * rule_opacity;
     // X11 clients can churn fullscreen requests while changing video modes.
     // Keep their advertised EWMH state as a render-time backstop so a missing
     // or temporarily retired presentation entry cannot expose compositor
@@ -316,7 +327,8 @@ pub(super) fn live_window_elements(
             .suppresses_chrome(window_surface.as_ref()),
         crate::xwayland::is_fullscreen(window),
     );
-    let chrome_alpha = if chrome_visible { alpha } else { 0.0 };
+    let (content_alpha, chrome_alpha) =
+        window_content_and_chrome_alpha(visual.opening_alpha, rule_opacity, chrome_visible);
     let server_titlebar = chrome_visible && chrome.has_server_titlebar();
     let node_id = context.nodes.id_for_surface(window_surface.as_ref());
     let user_pinned = node_id.is_some_and(|id| {
@@ -355,7 +367,7 @@ pub(super) fn live_window_elements(
     let rounded = content_radius > 0.0;
     let rounded_available = rounded && window_decoration_renderer.available(renderer);
     if join_ready {
-        let tint_alpha = alpha * JOIN_READY_TINT_ALPHA;
+        let tint_alpha = content_alpha * JOIN_READY_TINT_ALPHA;
         let focused = context.decorations.border_color_focused;
         let tint_color =
             smithay::backend::renderer::Color32F::new(focused.r, focused.g, focused.b, 1.0);
@@ -395,7 +407,7 @@ pub(super) fn live_window_elements(
     }
     let surface_location = crate::render::window_surface_location(location, window.geometry());
     let (popup_surfaces, surface_elements) =
-        crate::render::window_surface_elements(renderer, window, surface_location, alpha);
+        crate::render::window_surface_elements(renderer, window, surface_location, content_alpha);
     popup_elements.extend(popup_surfaces.into_iter().map(|surface_element| {
         let native_geometry = surface_element.geometry(Scale::from(1.0));
         let destination = if visual.maps_from_source() {
@@ -437,7 +449,7 @@ pub(super) fn live_window_elements(
             &visual,
             chrome_visible,
             Some(window_surface.as_ref()) == context.focused,
-            alpha,
+            content_alpha,
         ) {
             Ok(Some(shader_elements)) => {
                 return Ok(LiveWindowScene {
@@ -505,7 +517,7 @@ pub(super) fn live_window_elements(
             visual.animated_rect,
             visual.zoom_scale,
             completion,
-            alpha,
+            content_alpha,
             client_radii,
         ) {
             Ok(blend) => blend,
@@ -518,7 +530,11 @@ pub(super) fn live_window_elements(
         None
     };
     let arrange_fallback = if arrange_animating && arrange_blend.is_none() {
-        arrange_textures.fallback_element(window_surface.as_ref(), visual.animated_rect, alpha)
+        arrange_textures.fallback_element(
+            window_surface.as_ref(),
+            visual.animated_rect,
+            content_alpha,
+        )
     } else {
         None
     };
@@ -540,7 +556,7 @@ pub(super) fn live_window_elements(
                 destination: visual.animated_rect,
                 progress: completion,
                 hold_previous_until_restored_buffer_matches: hold_x11_fullscreen_exit,
-                alpha,
+                alpha: content_alpha,
                 radii: client_radii,
             },
         ) {
@@ -689,7 +705,7 @@ pub(super) fn live_window_elements(
                     .map(|rect| crate::render::effects::backdrop_blur::BlurPatch {
                         rect,
                         radius: 0.0,
-                        alpha,
+                        alpha: content_alpha,
                         clip: rounded_available.then_some((
                             visual.animated_rect,
                             if server_titlebar {
@@ -870,7 +886,7 @@ pub(super) fn live_window_elements(
                     visual.zoom_scale,
                 )
             },
-            alpha,
+            chrome_alpha,
             context.pins,
             context.overlays,
             context.decorations,
@@ -1207,6 +1223,7 @@ mod tests {
     use super::{
         active_crossfade_completion, compositor_chrome_visible, decoration_presentation_scale,
         quantized_f32, scaled_title_size, should_hold_x11_fullscreen_exit,
+        window_content_and_chrome_alpha,
     };
 
     #[test]
@@ -1247,6 +1264,27 @@ mod tests {
         assert!(!compositor_chrome_visible(true, false));
         assert!(!compositor_chrome_visible(false, true));
         assert!(!compositor_chrome_visible(true, true));
+    }
+
+    #[test]
+    fn window_rule_opacity_fades_content_not_chrome() {
+        let (content, chrome) = window_content_and_chrome_alpha(1.0, 0.9, true);
+        assert_eq!(content, 0.9);
+        assert_eq!(chrome, 1.0);
+    }
+
+    #[test]
+    fn opening_fade_still_applies_to_chrome() {
+        let (content, chrome) = window_content_and_chrome_alpha(0.5, 0.9, true);
+        assert_eq!(content, 0.45);
+        assert_eq!(chrome, 0.5);
+    }
+
+    #[test]
+    fn hidden_chrome_stays_invisible_regardless_of_rule_opacity() {
+        let (content, chrome) = window_content_and_chrome_alpha(1.0, 0.9, false);
+        assert_eq!(content, 0.9);
+        assert_eq!(chrome, 0.0);
     }
 
     #[test]

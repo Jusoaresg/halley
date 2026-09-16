@@ -51,7 +51,7 @@ Uniforms you may use:
 - `halley_random_seed` — stable in `[0, 1)` for the life of the animation
 - `halley_tex_scale` and `halley_tex_offset` — map geometry to `tex`
 - `halley_geo_size` — same as `size_geo.xy`
-- `alpha` — compositor opacity (rules, cluster fade). Do not apply it
+- `alpha` — client opacity (window-rule and cluster fade). Do not apply it
   yourself; the epilogue multiplies it.
 
 Sample the snapshot like this:

@@ -42,6 +42,9 @@ All notable changes to this project will be documented in this file.
   type draws instead. See `docs/window-shaders.md`.
 
 ### Changed
+- Apply window-rule `opacity` to client content and popups only. Titlebars,
+  borders, pin badges, and compositor shadows stay fully opaque. Open and
+  close animations still fade chrome with the window.
 - Start the systemd session without waiting for a compositor readiness signal,
   while still reporting executable startup failures. Keep session output and
   errors in `$XDG_RUNTIME_DIR/halley-session.log` after the service stops.

@@ -31,8 +31,9 @@ the X11 window class. `title` uses the corresponding toplevel/window title.
 
 - `width` and `height` set the requested initial size and must appear together.
   Halley enforces a safe minimum of 96 by 72 logical pixels.
-- `opacity` accepts `0.0` through `1.0` and applies to content, popups,
-  decorations, shadows, and transitions as one visual policy.
+- `opacity` accepts `0.0` through `1.0` and applies to the client and its
+  popups. Compositor titlebars, borders, pin badges, and shadows stay
+  opaque. Open and close animations still fade the whole window.
 - `blur true` explicitly enables full-surface compositor blur for the match;
   a client-provided nonempty background-effect region remains region-limited.
 - `blur false` disables all blur for the match, including client background-
