@@ -83,3 +83,6 @@ sha2 = "0.10"
 # at opt-level 0 they dominate the profile of a dogfooded dev session.
 [profile.dev.package."*"]
 opt-level = 3
+
+[patch."https://github.com/Smithay/smithay.git"]
+smithay = { path = "vendor/smithay" }

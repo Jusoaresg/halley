@@ -65,6 +65,9 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+
+- Initialize new X11 window properties off the compositor thread, preserving
+  X11 event order while slow property replies no longer block input and rendering.
 - Keep standalone X11 override-redirect pop-outs in screen coordinates when
   the Field is panned or zoomed, preserving client-controlled size and drag
   positions. Parent-attached popups continue to follow their owner.
