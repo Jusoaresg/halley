@@ -34,6 +34,7 @@ pub struct ShadowElement {
     destination: Rectangle<i32, Physical>,
     caster_size: (f32, f32),
     caster_center: (f32, f32),
+    hole_center: (f32, f32),
     corner_radii: crate::render::window_decoration::CornerRadii,
     spread: f32,
     blur_radius: f32,
@@ -86,6 +87,7 @@ impl ShadowRenderer {
         }
         let resources = self.resources.as_ref().expect("ensured above");
         let (destination, pad) = shadow_geometry(caster, config);
+        let (caster_center, hole_center) = shadow_centers(caster, pad, config);
         let identity = identity.into();
         let id = self.ids.entry(identity).or_insert_with(Id::new).clone();
         Ok(Some(ShadowElement {
@@ -93,10 +95,8 @@ impl ShadowRenderer {
             commit: shadow_commit(caster, corner_radii, alpha, config),
             destination,
             caster_size: (caster.size.w as f32, caster.size.h as f32),
-            caster_center: (
-                pad as f32 + caster.size.w as f32 * 0.5,
-                pad as f32 + caster.size.h as f32 * 0.5,
-            ),
+            caster_center,
+            hole_center,
             corner_radii: crate::render::window_decoration::CornerRadii {
                 top: corner_radii.top.max(0.0),
                 bottom: corner_radii.bottom.max(0.0),
@@ -140,6 +140,7 @@ impl ShadowRenderer {
                     UniformName::new("rect_size", UniformType::_2f),
                     UniformName::new("caster_size", UniformType::_2f),
                     UniformName::new("caster_center", UniformType::_2f),
+                    UniformName::new("hole_center", UniformType::_2f),
                     UniformName::new("corner_radii", UniformType::_2f),
                     UniformName::new("spread", UniformType::_1f),
                     UniformName::new("shadow_radius", UniformType::_1f),
@@ -232,6 +233,7 @@ impl RenderElement<GlesRenderer> for ShadowElement {
                 ),
                 Uniform::new("caster_size", self.caster_size),
                 Uniform::new("caster_center", self.caster_center),
+                Uniform::new("hole_center", self.hole_center),
                 Uniform::new(
                     "corner_radii",
                     (self.corner_radii.top, self.corner_radii.bottom),
@@ -248,14 +250,20 @@ impl RenderElement<GlesRenderer> for ShadowElement {
     }
 }
 
+fn shadow_offset(config: halley_config::ShadowLayer) -> (i32, i32) {
+    (
+        config.offset_x.round() as i32,
+        config.offset_y.round() as i32,
+    )
+}
+
 fn shadow_geometry(
     caster: Rectangle<i32, Physical>,
     config: halley_config::ShadowLayer,
 ) -> (Rectangle<i32, Physical>, i32) {
     let falloff = (config.blur_radius.max(0.0) * 3.0).ceil() as i32;
     let pad = falloff + config.spread.max(0.0).ceil() as i32 + 2;
-    let offset_x = config.offset_x.round() as i32;
-    let offset_y = config.offset_y.round() as i32;
+    let (offset_x, offset_y) = shadow_offset(config);
     (
         Rectangle::new(
             (caster.loc.x + offset_x - pad, caster.loc.y + offset_y - pad).into(),
@@ -267,6 +275,23 @@ fn shadow_geometry(
         ),
         pad,
     )
+}
+
+fn shadow_centers(
+    caster: Rectangle<i32, Physical>,
+    pad: i32,
+    config: halley_config::ShadowLayer,
+) -> ((f32, f32), (f32, f32)) {
+    let (offset_x, offset_y) = shadow_offset(config);
+    let caster_center = (
+        pad as f32 + caster.size.w as f32 * 0.5,
+        pad as f32 + caster.size.h as f32 * 0.5,
+    );
+    let hole_center = (
+        caster_center.0 - offset_x as f32,
+        caster_center.1 - offset_y as f32,
+    );
+    (caster_center, hole_center)
 }
 
 fn shadow_commit(
@@ -313,5 +338,33 @@ mod tests {
         assert_eq!(pad, 28);
         assert_eq!(geometry.loc, (75, 177).into());
         assert_eq!(geometry.size, (356, 206).into());
+    }
+
+    #[test]
+    fn hole_matches_caster_when_the_shadow_is_not_offset() {
+        let config = halley_config::ShadowLayer {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            ..halley_config::Shadows::default().window
+        };
+        let caster = Rectangle::new((40, 80).into(), (200, 100).into());
+        let (_, pad) = shadow_geometry(caster, config);
+        let (caster_center, hole_center) = shadow_centers(caster, pad, config);
+        assert_eq!(hole_center, caster_center);
+        assert_eq!(hole_center, (pad as f32 + 100.0, pad as f32 + 50.0));
+    }
+
+    #[test]
+    fn hole_stays_on_the_window_when_the_shadow_is_offset() {
+        let config = halley_config::ShadowLayer {
+            offset_x: 4.0,
+            offset_y: 9.0,
+            ..halley_config::Shadows::default().window
+        };
+        let caster = Rectangle::new((40, 80).into(), (200, 100).into());
+        let (_, pad) = shadow_geometry(caster, config);
+        let (caster_center, hole_center) = shadow_centers(caster, pad, config);
+        assert_eq!(caster_center, (pad as f32 + 100.0, pad as f32 + 50.0));
+        assert_eq!(hole_center, (caster_center.0 - 4.0, caster_center.1 - 9.0));
     }
 }

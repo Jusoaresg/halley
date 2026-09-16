@@ -452,6 +452,8 @@ effects:
   # Independent shadow layers. blur-radius controls softness; spread expands
   # the solid caster before the falloff; offsets move the shadow in pixels.
   # Colours use #rrggbbaa, with the final byte controlling shadow opacity.
+  # The caster punches a hole in its own shadow so transparent windows are
+  # not filled in by the halo behind them.
   shadows:
     window:
       enabled true

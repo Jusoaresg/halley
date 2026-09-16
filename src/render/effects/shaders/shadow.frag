@@ -7,6 +7,7 @@ uniform float alpha;
 uniform vec2 rect_size;
 uniform vec2 caster_size;
 uniform vec2 caster_center;
+uniform vec2 hole_center;
 uniform vec2 corner_radii;
 uniform float spread;
 uniform float shadow_radius;
@@ -34,10 +35,11 @@ void main() {
     vec2 p = v_coords * size - caster_center;
     vec2 radii = clamp(corner_radii, vec2(0.0), vec2(min(caster.x, caster.y) * 0.5));
     float dist = rounded_rect_sdf(p, caster, radii);
+    float hole_dist = rounded_rect_sdf(v_coords * size - hole_center, caster, radii);
 
     float blur = max(shadow_radius, 1.0);
     float outset = max(spread, 0.0);
-    if (max(dist, 0.0) >= outset + blur * 3.0) {
+    if (hole_dist < -0.75 || max(dist, 0.0) >= outset + blur * 3.0) {
         discard;
     }
 
@@ -45,7 +47,8 @@ void main() {
     float falloff = 0.5 * (
         1.0 - erf_approx((dist - outset) / (sigma * 1.41421356))
     );
-    float a = shadow_color.a * alpha * falloff;
+    float cut = smoothstep(-0.75, 0.75, hole_dist);
+    float a = shadow_color.a * alpha * falloff * cut;
     if (a <= 0.003) {
         discard;
     }

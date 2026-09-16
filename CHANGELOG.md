@@ -69,6 +69,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Cut compositor drop shadows out of the window (or node, or overlay) they
+  belong to, so transparent surfaces such as Ghostty show whatever is actually
+  behind them instead of a filled shadow sheet. Offset shadows still cast from
+  the shifted halo; the hole stays on the real window.
 - Initialize new X11 window properties off the compositor thread, preserving
   X11 event order while slow property replies no longer block input and rendering.
 - Keep standalone X11 override-redirect pop-outs in screen coordinates when
