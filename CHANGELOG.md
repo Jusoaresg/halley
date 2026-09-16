@@ -72,6 +72,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Keep a field-maximized window (Firefox session restore) from snapping to
+  its windowed size when `Mod+F` takes over. Compositor fullscreen no longer
+  relocates or un-maximizes the client first, leftover Maximized no longer
+  blocks the visual, echoed `set_maximized` requests are ignored, and leaving
+  `Mod+F` restores maximize instead of the tiny windowed rect.
 - Cut compositor drop shadows out of the window (or node, or overlay) they
   belong to, so transparent surfaces such as Ghostty show whatever is actually
   behind them instead of a filled shadow sheet. Offset shadows still cast from

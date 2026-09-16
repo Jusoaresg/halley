@@ -560,6 +560,9 @@ impl<D: SessionDriver> XwmHandler for Session<D> {
         let maximized = window_for_surface(&self.wayland, &self.nodes, &surface)
             .and_then(|window| window.wl_surface().map(|surface| surface.into_owned()))
             .is_some_and(|wl_surface| {
+                if self.fullscreen.suppresses_client_maximize(&wl_surface) {
+                    return true;
+                }
                 let _ = crate::session::set_surface_field_maximized(self, &wl_surface, true);
                 self.maximize.contains(&wl_surface)
             });

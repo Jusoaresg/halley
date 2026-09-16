@@ -958,14 +958,33 @@ fn toggle_focused_fullscreen<D: SessionDriver>(session: &mut Session<D>, output:
             }
         }
         if entering {
-            session
-                .fullscreen
-                .request_compositor(&mut session.wayland, toplevel);
+            session.fullscreen.request_compositor(
+                &mut session.wayland,
+                toplevel,
+                field_handoff.is_some(),
+            );
+        } else if session
+            .fullscreen
+            .compositor_unfullscreen_restores_maximize(&focused)
+            && set_surface_field_maximized(session, &focused, true)
+        {
+            pointer::reconcile_state(session);
+            session.request_redraw();
+            return;
         } else {
             session
                 .fullscreen
                 .unrequest_compositor(&session.wayland, toplevel);
         }
+    } else if !entering
+        && session
+            .fullscreen
+            .compositor_unfullscreen_restores_maximize(&focused)
+        && set_surface_field_maximized(session, &focused, true)
+    {
+        pointer::reconcile_state(session);
+        session.request_redraw();
+        return;
     } else {
         crate::xwayland::set_window_fullscreen(session, &window, entering);
     }
@@ -1064,12 +1083,7 @@ pub(crate) fn prepare_field_maximize_fullscreen_handoff<D: SessionDriver>(
     if !camera_handoff {
         let _ = session.cameras.apply_field_maximize(maximize_output, None);
     }
-    if restore.surface == *surface {
-        session
-            .wayland
-            .space
-            .relocate_element(window, restore.geometry.loc);
-    } else {
+    if restore.surface != *surface {
         configure_field_geometry(session, &restore);
     }
 

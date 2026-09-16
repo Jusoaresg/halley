@@ -349,15 +349,22 @@ impl FullscreenManager {
         toplevel: &ToplevelSurface,
         requested: Option<WlOutput>,
     ) {
-        self.request_with_origin(wayland, toplevel, requested, FullscreenOrigin::Client);
+        self.request_with_origin(wayland, toplevel, requested, FullscreenOrigin::Client, false);
     }
 
     pub(crate) fn request_compositor(
         &mut self,
         wayland: &mut WaylandState,
         toplevel: &ToplevelSurface,
+        retain_maximized: bool,
     ) {
-        self.request_with_origin(wayland, toplevel, None, FullscreenOrigin::Compositor);
+        self.request_with_origin(
+            wayland,
+            toplevel,
+            None,
+            FullscreenOrigin::Compositor,
+            retain_maximized,
+        );
         if let Some(entry) = self.windows.get_mut(toplevel.wl_surface()) {
             // Mod+F already captured the outgoing texture at input time. Do
             // not overwrite it in the pre-commit hook after the new buffer
@@ -372,6 +379,7 @@ impl FullscreenManager {
         toplevel: &ToplevelSurface,
         requested: Option<WlOutput>,
         origin: FullscreenOrigin,
+        retain_maximized: bool,
     ) {
         let window = find_window(wayland, toplevel.wl_surface()).cloned();
         // A client can enter its own fullscreen mode while the compositor is
@@ -453,6 +461,9 @@ impl FullscreenManager {
             entry.transition = None;
         }
         entry.target_output = target.name();
+        if retain_maximized {
+            entry.restore_kind = FullscreenRestoreKind::FieldMaximized;
+        }
         // The destination is the size we are about to configure, decided once
         // here, exactly like field maximize decides its target rect at toggle
         // time. `handle_commit` only re-reads the client's committed size once
@@ -460,9 +471,17 @@ impl FullscreenManager {
         entry.fullscreen_size = output_geometry.size;
         let protocol_origin = native_protocol_origin(entry);
         let protocol_desired = entry.native.is_none_or(|native| native.protocol_desired);
+        let keep_maximized_protocol = retain_maximized
+            && origin == FullscreenOrigin::Compositor
+            && !protocol_desired;
 
         toplevel.with_pending_state(|state| {
-            apply_protocol_presentation_state(state, protocol_origin, protocol_desired);
+            apply_protocol_presentation_state_for_request(
+                state,
+                protocol_origin,
+                protocol_desired,
+                keep_maximized_protocol,
+            );
             super::decoration::clear_tiled_hint(state);
             state.size = Some(output_geometry.size);
             state.bounds = Some(output_geometry.size);
@@ -1000,16 +1019,20 @@ impl FullscreenManager {
         let target_output = entry.target_output.clone();
         let restore = entry.restore.clone();
         let preserve_stack = entry.preserve_stack;
+        let retain_maximized = entry.restore_kind == FullscreenRestoreKind::FieldMaximized
+            && entry.origin == FullscreenOrigin::Compositor
+            && !protocol_desired;
         let committed = toplevel.with_committed_state(|state| {
             state.is_some_and(|state| {
-                if protocol_desired {
+                protocol_commit_is_active(
+                    protocol_desired,
                     state
                         .states
-                        .contains(protocol_presentation_state(protocol_origin))
-                } else {
-                    state.states.contains(State::Fullscreen)
-                        || state.states.contains(State::Maximized)
-                }
+                        .contains(protocol_presentation_state(protocol_origin)),
+                    state.states.contains(State::Fullscreen),
+                    state.states.contains(State::Maximized),
+                    retain_maximized,
+                )
             })
         });
         let commit_action = fullscreen_commit_action(entry, committed);
@@ -1361,6 +1384,24 @@ impl FullscreenManager {
             .is_some_and(client_release_restores_field_maximize)
     }
 
+    /// Whether leaving compositor-owned fullscreen should restore the
+    /// field-maximize presentation it replaced. Nested client fullscreen keeps
+    /// ownership instead.
+    pub(crate) fn compositor_unfullscreen_restores_maximize(&self, surface: &WlSurface) -> bool {
+        self.windows
+            .get(surface)
+            .is_some_and(compositor_release_restores_field_maximize)
+    }
+
+    /// Client maximize requests received while Mod+F owns the window are
+    /// echoes of the previous maximized state, not a new user action.
+    pub(crate) fn suppresses_client_maximize(&self, surface: &WlSurface) -> bool {
+        self.windows.get(surface).is_some_and(|entry| {
+            entry.desired
+                && entry.native.is_some_and(|native| native.compositor_requested)
+        })
+    }
+
     pub(crate) fn restore_placement(
         &self,
         surface: &WlSurface,
@@ -1568,6 +1609,50 @@ fn client_release_restores_field_maximize(entry: &FullscreenWindow) -> bool {
         .map_or(entry.origin == FullscreenOrigin::Client, |native| {
             native.client_requested && !native.compositor_requested
         })
+}
+
+fn compositor_release_restores_field_maximize(entry: &FullscreenWindow) -> bool {
+    if entry.restore_kind != FullscreenRestoreKind::FieldMaximized {
+        return false;
+    }
+    entry.native.is_some_and(|native| {
+        native.compositor_requested && !native.client_requested
+    })
+}
+
+/// Whether the committed xdg states still count as the protocol fullscreen
+/// edge `handle_commit` is waiting on.
+fn protocol_commit_is_active(
+    protocol_desired: bool,
+    has_target_state: bool,
+    has_fullscreen: bool,
+    has_maximized: bool,
+    retain_maximized: bool,
+) -> bool {
+    if protocol_desired {
+        has_target_state
+    } else if retain_maximized {
+        // Mod+F replaced field-maximize without taking the Fullscreen bit.
+        // Leftover Maximized is intentional so Firefox does not snap to its
+        // windowed size; only leftover Fullscreen still blocks the visual.
+        has_fullscreen
+    } else {
+        has_fullscreen || has_maximized
+    }
+}
+
+fn apply_protocol_presentation_state_for_request(
+    state: &mut ToplevelState,
+    origin: FullscreenOrigin,
+    active: bool,
+    retain_maximized: bool,
+) {
+    if retain_maximized && origin == FullscreenOrigin::Compositor && !active {
+        state.states.unset(State::Fullscreen);
+        state.states.set(State::Maximized);
+        return;
+    }
+    apply_protocol_presentation_state(state, origin, active);
 }
 
 fn protocol_presentation_state(origin: FullscreenOrigin) -> State {
@@ -2333,6 +2418,76 @@ mod tests {
         );
         assert!(!pending.states.contains(State::Fullscreen));
         assert!(!pending.states.contains(State::Maximized));
+    }
+
+    #[test]
+    fn compositor_fullscreen_from_maximize_keeps_the_maximized_bit() {
+        let mut pending = ToplevelState::default();
+        apply_protocol_presentation_state_for_request(
+            &mut pending,
+            FullscreenOrigin::Compositor,
+            false,
+            true,
+        );
+        assert!(!pending.states.contains(State::Fullscreen));
+        assert!(pending.states.contains(State::Maximized));
+
+        apply_protocol_presentation_state_for_request(
+            &mut pending,
+            FullscreenOrigin::Compositor,
+            false,
+            false,
+        );
+        assert!(!pending.states.contains(State::Fullscreen));
+        assert!(!pending.states.contains(State::Maximized));
+    }
+
+    #[test]
+    fn leftover_maximized_does_not_block_protocol_windowed_mod_f() {
+        assert!(!protocol_commit_is_active(
+            false, false, false, true, true
+        ));
+        assert!(protocol_commit_is_active(
+            false, false, false, true, false
+        ));
+        assert!(protocol_commit_is_active(
+            false, false, true, false, true
+        ));
+        assert!(protocol_commit_is_active(true, true, true, false, false));
+    }
+
+    #[test]
+    fn compositor_fullscreen_restores_the_field_maximize_it_replaced() {
+        let mut entry = test_entry(false);
+        entry.restore_kind = FullscreenRestoreKind::FieldMaximized;
+        request_native_owner(&mut entry, FullscreenOrigin::Compositor);
+        assert!(compositor_release_restores_field_maximize(&entry));
+
+        request_native_owner(&mut entry, FullscreenOrigin::Client);
+        assert!(
+            !compositor_release_restores_field_maximize(&entry),
+            "nested client fullscreen keeps ownership when Mod+F exits"
+        );
+
+        entry.restore_kind = FullscreenRestoreKind::Windowed;
+        release_native_owner(&mut entry, FullscreenOrigin::Client);
+        assert!(!compositor_release_restores_field_maximize(&entry));
+    }
+
+    #[test]
+    fn maximized_buffer_can_start_compositor_fullscreen_from_field_maximize() {
+        let mut entering = test_entry(false);
+        entering.restore = Some(WindowedPlacement {
+            location: (400, 240).into(),
+            geometry: Rectangle::new((400, 240).into(), (800, 600).into()),
+            output: Some("DP-1".to_string()),
+        });
+        entering.restore_kind = FullscreenRestoreKind::FieldMaximized;
+        assert!(native_visual_buffer_matches(
+            &entering,
+            Some((1840, 1120).into()),
+            true,
+        ));
     }
 
     #[test]

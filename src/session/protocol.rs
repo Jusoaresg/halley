@@ -946,6 +946,17 @@ impl<D: SessionDriver> XdgShellHandler for Session<D> {
         {
             crate::nodes::restore(self, id, SERIAL_COUNTER.next_serial());
         }
+        if self
+            .fullscreen
+            .suppresses_client_maximize(surface.wl_surface())
+        {
+            // Firefox and similar clients echo set_maximized after we take
+            // Mod+F over a maximized window. Honoring it tears down pending
+            // compositor fullscreen and leaves the window at its windowed
+            // restore size. xdg-shell still requires a configure.
+            surface.send_configure();
+            return;
+        }
         super::cancel_grab_for_surface(self, surface.wl_surface());
         super::set_surface_field_maximized(self, surface.wl_surface(), true);
     }
