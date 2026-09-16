@@ -370,6 +370,13 @@ impl<D: SessionDriver> XwmHandler for Session<D> {
                     .insert(xid, OverrideRedirectPlacement { geometry });
                 return;
             };
+            // During an explicit move, older ConfigureNotify replies must not
+            // pull the rendered pop-out behind the current pointer position.
+            if matches!(&self.interactions.grab,
+                crate::input::grab::Grab::MovePopup { window: grabbed, .. } if grabbed == &window)
+            {
+                return;
+            }
             let previous_output = crate::wayland::window_output_name(&window);
             let resolution = override_redirect_resolution(self, &surface, geometry);
             apply_override_redirect_resolution(&window, &resolution);

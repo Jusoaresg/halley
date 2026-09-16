@@ -199,6 +199,8 @@ pub enum Grab {
     /// or drag, so no compositor move side effects happen until motion crosses
     /// the shared drag threshold.
     PendingWindowMove(PendingWindowMove),
+    /// Explicit modifier-drag of a standalone, screen-positioned X11 pop-out.
+    MovePopup { window: Window, button: u32, offset: Point<f64, Logical> },
     /// Cursor-to-window anchor in the coordinate space of the window's live
     /// presentation. Field windows use source coordinates; screen-sized
     /// cluster cards use output pixels.
@@ -300,7 +302,7 @@ pub fn belongs_to_surface(grab: &Grab, surface: &WlSurface) -> bool {
     let root = crate::wayland::compositor::root_surface(surface);
     let window = match grab {
         Grab::PendingWindowMove(pending) => Some(&pending.window),
-        Grab::MoveWindow { window, .. } => Some(window),
+        Grab::MoveWindow { window, .. } | Grab::MovePopup { window, .. } => Some(window),
         Grab::ResizeWindow(resize) => Some(&resize.window),
         Grab::None
         | Grab::Pan { .. }

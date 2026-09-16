@@ -306,6 +306,19 @@ impl X11Surface {
         self.state.lock().unwrap().alive && self.conn.strong_count() != 0
     }
 
+    /// Move an override-redirect surface during an explicit compositor drag.
+    pub fn move_override_redirect(&self, location: Point<i32, Logical>) -> Result<(), X11SurfaceError> {
+        // Explicit compositor drag only; ordinary configure retains its OR guard.
+        if !self.is_override_redirect() { return Ok(()); }
+        if let Some(conn) = self.conn.upgrade() {
+            let scale = self.client_scale.as_ref().map(|s| s.load(Ordering::Acquire)).unwrap_or(1.);
+            let location: Point<i32, _> = location.to_client_precise_round(scale);
+            conn.configure_window(self.window, &ConfigureWindowAux::default().x(location.x).y(location.y))?;
+            conn.flush()?;
+        }
+        Ok(())
+    }
+
     /// Send a configure to this window.
     ///
     /// If `rect` is provided the new state will be send to the window.

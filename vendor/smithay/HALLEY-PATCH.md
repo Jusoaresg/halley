@@ -16,3 +16,7 @@ synchronously for every newly created window.
 
 This addresses the captured update_properties/update_motif_hints wait. Other
 synchronous XWM request paths are not converted by this patch.
+
+An explicit override-redirect position-only configure method supports user-driven
+compositor moves of standalone pop-outs. It sends no synchronous confirmation
+request and leaves the normal configure guard unchanged.

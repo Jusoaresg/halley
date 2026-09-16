@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Allow modifier-dragging standalone X11 normal/utility pop-outs in screen
+  coordinates, without sending the drag to the app. Attached popups, menus, and
+  tooltips remain client-managed.
 - Add `Super+Alt+Shift+Arrow` Field window transfers between monitors, with
   bootstrap defaults, examples, and conflict-aware configuration migration.
 - Add optional directional `pan-field` keyboard actions without default binds,

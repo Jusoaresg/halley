@@ -273,6 +273,17 @@ fn dispatch_pointer_grab_action<D: SessionDriver>(
                 | crate::input::pointer::PointerTarget::Decoration { window, .. } => window,
                 _ => return false,
             };
+            if crate::window::accepts_popup_move(window) {
+                let geometry = route.visual_geometry.unwrap_or_else(|| window.geometry());
+                let pointer = session.pointer.position();
+                session.interactions.grab = crate::input::grab::Grab::MovePopup {
+                    window: window.clone(), button,
+                    offset: (f64::from(geometry.loc.x) - pointer.0, f64::from(geometry.loc.y) - pointer.1).into(),
+                };
+                session.cursor.set_override(crate::cursor::OverrideSource::Grab,
+                    Some(smithay::input::pointer::CursorIcon::Grabbing));
+                return true;
+            }
             if !crate::window::accepts_compositor_grab(window)
                 || window.wl_surface().is_some_and(|surface| {
                     session
@@ -2074,6 +2085,23 @@ where
         );
     }
     match &session.interactions.grab {
+        crate::input::grab::Grab::MovePopup { window, offset, .. } if motion.is_some() => {
+            let window = window.clone();
+            let location: Point<i32, Logical> = ((position_after.0 + offset.x).round() as i32,
+                (position_after.1 + offset.y).round() as i32).into();
+            if let Some(surface) = window.x11_surface() {
+                if let Err(err) = surface.move_override_redirect(location) {
+                    eventline::warn!("xwayland: pop-out move failed: {err}");
+                }
+            }
+            session.wayland.space.relocate_element(&window, location);
+            if let Some((output, _)) = output_at_pointer(&session.wayland.space, position_after) {
+                wayland::set_window_output(&window, &output);
+            }
+            session.request_redraw();
+            super::pointer::finish_frame(session, &pointer_handle);
+            return;
+        }
         crate::input::grab::Grab::MoveWindow {
             id,
             window,
@@ -2408,6 +2436,7 @@ where
         }
         crate::input::grab::Grab::ResizeWindow(_) => {}
         crate::input::grab::Grab::None
+        | crate::input::grab::Grab::MovePopup { .. }
         | crate::input::grab::Grab::PendingWindowMove(_)
         | crate::input::grab::Grab::PendingNode { .. }
         | crate::input::grab::Grab::PendingClusterCore { .. } => {}
@@ -2548,6 +2577,17 @@ where
         let state = button_event.state();
         let time = button_event.time_msec();
         let serial = SERIAL_COUNTER.next_serial();
+        if let crate::input::grab::Grab::MovePopup { button: owner, .. } = &session.interactions.grab {
+            if *owner == button && state == ButtonState::Released {
+                session.interactions.grab = crate::input::grab::Grab::None;
+                session.cursor.set_override(crate::cursor::OverrideSource::Grab, None);
+                super::pointer::update_client_state(session, time);
+                session.request_redraw();
+            }
+            // The app received neither the initiating press nor any held motion.
+            super::pointer::finish_frame(session, &pointer_handle);
+            return;
+        }
         if matches!(
             &session.interactions.grab,
             crate::input::grab::Grab::PendingWindowMove(pending)
