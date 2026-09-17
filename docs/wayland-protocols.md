@@ -1,5 +1,16 @@
 # Wayland protocol support
 
+Halley advertises `zwp_text_input_manager_v3` version 1 and
+`zwp_input_method_manager_v2` version 1. Native Wayland clients bind
+text-input to send surrounding text and receive preedit and committed
+composition. Input-method is restricted to ordinary compositor clients
+(the same `ClientState` filter as virtual-keyboard), so fcitx and ibus
+can attach as the IME while XWayland cannot. Composition follows keyboard
+focus: a `WlSurface` enter/leave updates text-input automatically, IME
+candidate windows track the focused parent through the existing popup
+tree, and an IME keyboard grab is not replaced by an xdg-popup grab.
+X11 applications keep using X11 IME and do not participate in this pair.
+
 Halley advertises `ext_background_effect_manager_v1` version 1 with the blur
 capability. A committed `set_blur_region` is clipped to the requesting
 surface, preserves ordered `wl_region` additions and subtractions, and is

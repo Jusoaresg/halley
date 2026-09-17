@@ -7,6 +7,7 @@ use smithay::input::SeatHandler;
 use smithay::input::pointer::Focus;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Rectangle, Serial};
+use smithay::wayland::input_method::InputMethodSeat;
 use smithay::wayland::seat::WaylandFocus;
 use smithay::wayland::shell::xdg::{PopupSurface, PositionerState};
 
@@ -219,7 +220,10 @@ where
     D::KeyboardFocus: WaylandFocus + From<WlSurface> + From<PopupKind>,
     WlSurface: From<D::KeyboardFocus>,
 {
-    if let Some(keyboard) = seat.get_keyboard() {
+    let ime_keyboard_grabbed = seat.input_method().keyboard_grabbed();
+    if let Some(keyboard) = seat.get_keyboard()
+        && popup_takes_keyboard_grab(ime_keyboard_grabbed)
+    {
         if keyboard.is_grabbed()
             && !(keyboard.has_grab(serial)
                 || keyboard.has_grab(grab.previous_serial().unwrap_or(serial)))
@@ -254,9 +258,15 @@ pub(crate) fn outside_popup_press<T: PartialEq>(
     pressed && target.is_none_or(|target| !popups.contains(target))
 }
 
+/// Smithay cannot stack keyboard grabs. Keep an active IME grab instead of
+/// replacing it with a popup grab, while still taking the pointer grab.
+pub(crate) fn popup_takes_keyboard_grab(ime_keyboard_grabbed: bool) -> bool {
+    !ime_keyboard_grabbed
+}
+
 #[cfg(test)]
 mod dismissal_tests {
-    use super::outside_popup_press;
+    use super::{outside_popup_press, popup_takes_keyboard_grab};
 
     #[test]
     fn outside_press_dismisses_for_panel_other_client_and_background() {
@@ -274,5 +284,11 @@ mod dismissal_tests {
         }
         assert!(!outside_popup_press(false, None, &menu_tree));
         assert!(!outside_popup_press(false, Some(&1), &menu_tree));
+    }
+
+    #[test]
+    fn ime_grab_keeps_keyboard_and_still_allows_pointer_grab() {
+        assert!(!popup_takes_keyboard_grab(true));
+        assert!(popup_takes_keyboard_grab(false));
     }
 }

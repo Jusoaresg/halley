@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Advertise `zwp_text_input_manager_v3` and `zwp_input_method_manager_v2` so
+  Wayland IMEs (fcitx/ibus) can compose into native apps. X11 apps are unchanged.
 - Allow modifier-dragging standalone X11 normal/utility pop-outs in screen
   coordinates, without sending the drag to the app. Attached popups, menus, and
   tooltips remain client-managed. Ordinary app-controlled dragging is unchanged.

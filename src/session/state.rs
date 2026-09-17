@@ -17,6 +17,7 @@ use smithay::wayland::drm_syncobj::{DrmSyncPointSource, DrmSyncobjState};
 use smithay::wayland::fractional_scale::FractionalScaleManagerState;
 use smithay::wayland::idle_inhibit::IdleInhibitManagerState;
 use smithay::wayland::idle_notify::IdleNotifierState;
+use smithay::wayland::input_method::InputMethodManagerState;
 use smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState;
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::pointer_constraints::PointerConstraintsState;
@@ -31,6 +32,7 @@ use smithay::wayland::shell::wlr_layer::WlrLayerShellState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
+use smithay::wayland::text_input::TextInputManagerState;
 use smithay::wayland::viewporter::ViewporterState;
 use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
 use smithay::wayland::xdg_activation::XdgActivationState;
@@ -222,6 +224,10 @@ impl<D: SessionDriver> Session<D> {
             PointerGesturesState::new::<Self>(&display_handle),
             CursorShapeManagerState::new::<Self>(&display_handle),
             VirtualKeyboardManagerState::new::<Self, _>(&display_handle, |client| {
+                client.get_data::<ClientState>().is_some()
+            }),
+            TextInputManagerState::new::<Self>(&display_handle),
+            InputMethodManagerState::new::<Self, _>(&display_handle, |client| {
                 client.get_data::<ClientState>().is_some()
             }),
             KeyboardShortcutsInhibitState::new::<Self>(&display_handle),

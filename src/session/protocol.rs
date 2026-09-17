@@ -64,9 +64,11 @@ use smithay::{
     delegate_fractional_scale,
     delegate_idle_inhibit,
     delegate_idle_notify,
+    delegate_input_method_manager,
     delegate_keyboard_shortcuts_inhibit, delegate_layer_shell, delegate_output,
     delegate_pointer_constraints, delegate_primary_selection, delegate_relative_pointer,
     delegate_pointer_gestures, delegate_presentation, delegate_seat, delegate_shm, delegate_viewporter,
+    delegate_text_input_manager,
     delegate_virtual_keyboard_manager,
     delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell,
 };
@@ -274,6 +276,7 @@ impl<D: SessionDriver> CompositorHandler for Session<D> {
                 font: &self.settings.font,
             },
         );
+        wayland::text_input::handle_popup_commit(self, surface);
         match toplevel_commit.clone() {
             wayland::xdg_shell::ToplevelCommit::Mapped(mapped) => {
                 let startup_cluster = self.startup_cluster_for_wayland_surface(&mapped);
@@ -1372,6 +1375,8 @@ delegate_relative_pointer!(@<D: SessionDriver> Session<D>);
 delegate_pointer_constraints!(@<D: SessionDriver> Session<D>);
 delegate_pointer_gestures!(@<D: SessionDriver> Session<D>);
 delegate_virtual_keyboard_manager!(@<D: SessionDriver> Session<D>);
+delegate_text_input_manager!(@<D: SessionDriver> Session<D>);
+delegate_input_method_manager!(@<D: SessionDriver> Session<D>);
 delegate_keyboard_shortcuts_inhibit!(@<D: SessionDriver> Session<D>);
 delegate_data_device!(@<D: SessionDriver> Session<D>);
 delegate_primary_selection!(@<D: SessionDriver> Session<D>);

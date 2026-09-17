@@ -22,7 +22,7 @@ use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, Resource, delegate_dispatch,
     delegate_global_dispatch,
 };
-use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size};
+use smithay::utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size};
 use smithay::wayland::compositor::{send_surface_state, with_states};
 use smithay::wayland::fractional_scale::with_fractional_scale;
 use smithay::wayland::session_lock::{
@@ -129,6 +129,23 @@ impl State {
                     .find(|entry| entry.surface.alive())
                     .map(|entry| entry.surface.wl_surface().clone())
             })
+    }
+
+    pub fn output_for_surface(&self, surface: &WlSurface) -> Option<&Output> {
+        let root = crate::wayland::compositor::root_surface(surface);
+        self.surfaces
+            .get(&root.id())
+            .filter(|entry| entry.surface.alive())
+            .map(|entry| &entry.output)
+    }
+
+    pub fn geometry_for_surface(&self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {
+        let root = crate::wayland::compositor::root_surface(surface);
+        let size = self.configured_sizes.get(&root.id())?;
+        Some(Rectangle::from_size(Size::from((
+            i32::try_from(size.w).unwrap_or(i32::MAX),
+            i32::try_from(size.h).unwrap_or(i32::MAX),
+        ))))
     }
 
     pub(crate) fn set_focus(&mut self, surface: &WlSurface) {

@@ -12,6 +12,7 @@ pub mod popup;
 pub mod presentation;
 pub mod selection;
 pub mod session_lock;
+pub mod text_input;
 pub mod wlr_gamma_control;
 pub mod wlr_output_management;
 pub mod wlr_screencopy;
@@ -34,6 +35,7 @@ use smithay::wayland::cursor_shape::CursorShapeManagerState;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufState};
 use smithay::wayland::fractional_scale::FractionalScaleManagerState;
 use smithay::wayland::idle_inhibit::IdleInhibitManagerState;
+use smithay::wayland::input_method::InputMethodManagerState;
 use smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState;
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::pointer_constraints::PointerConstraintsState;
@@ -46,6 +48,7 @@ use smithay::wayland::shell::wlr_layer::WlrLayerShellState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
+use smithay::wayland::text_input::TextInputManagerState;
 use smithay::wayland::viewporter::ViewporterState;
 use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
 use smithay::wayland::xdg_activation::XdgActivationState;
@@ -216,6 +219,8 @@ pub struct WaylandState {
     _pointer_gestures_state: PointerGesturesState,
     _cursor_shape_manager_state: CursorShapeManagerState,
     _virtual_keyboard_manager_state: VirtualKeyboardManagerState,
+    _text_input_manager_state: TextInputManagerState,
+    _input_method_manager_state: InputMethodManagerState,
     pub keyboard_shortcuts_inhibit_state: KeyboardShortcutsInhibitState,
     pub shm_state: ShmState,
     // Retained alongside the wl_output globals it serves.
@@ -303,6 +308,8 @@ impl WaylandState {
         pointer_gestures_state: PointerGesturesState,
         cursor_shape_manager_state: CursorShapeManagerState,
         virtual_keyboard_manager_state: VirtualKeyboardManagerState,
+        text_input_manager_state: TextInputManagerState,
+        input_method_manager_state: InputMethodManagerState,
         keyboard_shortcuts_inhibit_state: KeyboardShortcutsInhibitState,
         shm_state: ShmState,
         output_manager_state: OutputManagerState,
@@ -332,6 +339,8 @@ impl WaylandState {
             _pointer_gestures_state: pointer_gestures_state,
             _cursor_shape_manager_state: cursor_shape_manager_state,
             _virtual_keyboard_manager_state: virtual_keyboard_manager_state,
+            _text_input_manager_state: text_input_manager_state,
+            _input_method_manager_state: input_method_manager_state,
             keyboard_shortcuts_inhibit_state,
             shm_state,
             _output_manager_state: output_manager_state,
