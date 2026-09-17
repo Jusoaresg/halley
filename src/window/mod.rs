@@ -167,15 +167,24 @@ mod tests {
 /// not grant WM focus or resize privileges to override-redirect surfaces.
 pub fn accepts_popup_move(window: &Window) -> bool {
     window.x11_surface().is_some_and(|surface| {
-        popup_move_policy(surface.is_override_redirect(),
-            surface.is_transient_for().is_some() || crate::wayland::window_presentation_owner(window).is_some(),
-            surface.window_type())
+        popup_move_policy(
+            surface.is_override_redirect(),
+            surface.is_transient_for().is_some()
+                || crate::wayland::window_presentation_owner(window).is_some(),
+            surface.window_type(),
+        )
     })
 }
 
-fn popup_move_policy(override_redirect: bool, attached: bool, kind: Option<smithay::xwayland::xwm::WmWindowType>) -> bool {
+fn popup_move_policy(
+    override_redirect: bool,
+    attached: bool,
+    kind: Option<smithay::xwayland::xwm::WmWindowType>,
+) -> bool {
     use smithay::xwayland::xwm::WmWindowType;
-    override_redirect && !attached && matches!(kind, Some(WmWindowType::Normal | WmWindowType::Utility))
+    override_redirect
+        && !attached
+        && matches!(kind, Some(WmWindowType::Normal | WmWindowType::Utility))
 }
 
 #[cfg(test)]
@@ -192,7 +201,17 @@ mod popup_move_tests {
     }
     #[test]
     fn menus_tooltips_and_unclassified_surfaces_remain_client_managed() {
-        for kind in [None, Some(Menu), Some(PopupMenu), Some(DropdownMenu), Some(Tooltip), Some(Combo), Some(Dnd), Some(Notification), Some(Dock)] {
+        for kind in [
+            None,
+            Some(Menu),
+            Some(PopupMenu),
+            Some(DropdownMenu),
+            Some(Tooltip),
+            Some(Combo),
+            Some(Dnd),
+            Some(Notification),
+            Some(Dock),
+        ] {
             assert!(!popup_move_policy(true, false, kind));
         }
     }

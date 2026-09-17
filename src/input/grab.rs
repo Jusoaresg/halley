@@ -200,7 +200,11 @@ pub enum Grab {
     /// the shared drag threshold.
     PendingWindowMove(PendingWindowMove),
     /// Explicit modifier-drag of a standalone, screen-positioned X11 pop-out.
-    MovePopup { window: Window, button: u32, offset: Point<f64, Logical> },
+    MovePopup {
+        window: Window,
+        button: u32,
+        offset: Point<f64, Logical>,
+    },
     /// Cursor-to-window anchor in the coordinate space of the window's live
     /// presentation. Field windows use source coordinates; screen-sized
     /// cluster cards use output pixels.

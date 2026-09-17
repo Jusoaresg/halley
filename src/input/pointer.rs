@@ -996,7 +996,13 @@ mod tests {
                 Some(Hit::Resize(ResizeHandle::Right)),
             );
             assert_eq!(
-                decoration_hit_at(None, frame, Point::from((400.0 - expected_band - 0.5, 250.0)), true, band),
+                decoration_hit_at(
+                    None,
+                    frame,
+                    Point::from((400.0 - expected_band - 0.5, 250.0)),
+                    true,
+                    band
+                ),
                 None,
                 "client input beyond the border must remain available (width={width})",
             );

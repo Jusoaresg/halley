@@ -349,7 +349,13 @@ impl FullscreenManager {
         toplevel: &ToplevelSurface,
         requested: Option<WlOutput>,
     ) {
-        self.request_with_origin(wayland, toplevel, requested, FullscreenOrigin::Client, false);
+        self.request_with_origin(
+            wayland,
+            toplevel,
+            requested,
+            FullscreenOrigin::Client,
+            false,
+        );
     }
 
     pub(crate) fn request_compositor(
@@ -471,9 +477,8 @@ impl FullscreenManager {
         entry.fullscreen_size = output_geometry.size;
         let protocol_origin = native_protocol_origin(entry);
         let protocol_desired = entry.native.is_none_or(|native| native.protocol_desired);
-        let keep_maximized_protocol = retain_maximized
-            && origin == FullscreenOrigin::Compositor
-            && !protocol_desired;
+        let keep_maximized_protocol =
+            retain_maximized && origin == FullscreenOrigin::Compositor && !protocol_desired;
 
         toplevel.with_pending_state(|state| {
             apply_protocol_presentation_state_for_request(
@@ -1398,7 +1403,9 @@ impl FullscreenManager {
     pub(crate) fn suppresses_client_maximize(&self, surface: &WlSurface) -> bool {
         self.windows.get(surface).is_some_and(|entry| {
             entry.desired
-                && entry.native.is_some_and(|native| native.compositor_requested)
+                && entry
+                    .native
+                    .is_some_and(|native| native.compositor_requested)
         })
     }
 
@@ -1615,9 +1622,9 @@ fn compositor_release_restores_field_maximize(entry: &FullscreenWindow) -> bool 
     if entry.restore_kind != FullscreenRestoreKind::FieldMaximized {
         return false;
     }
-    entry.native.is_some_and(|native| {
-        native.compositor_requested && !native.client_requested
-    })
+    entry
+        .native
+        .is_some_and(|native| native.compositor_requested && !native.client_requested)
 }
 
 /// Whether the committed xdg states still count as the protocol fullscreen
@@ -2444,15 +2451,9 @@ mod tests {
 
     #[test]
     fn leftover_maximized_does_not_block_protocol_windowed_mod_f() {
-        assert!(!protocol_commit_is_active(
-            false, false, false, true, true
-        ));
-        assert!(protocol_commit_is_active(
-            false, false, false, true, false
-        ));
-        assert!(protocol_commit_is_active(
-            false, false, true, false, true
-        ));
+        assert!(!protocol_commit_is_active(false, false, false, true, true));
+        assert!(protocol_commit_is_active(false, false, false, true, false));
+        assert!(protocol_commit_is_active(false, false, true, false, true));
         assert!(protocol_commit_is_active(true, true, true, false, false));
     }
 

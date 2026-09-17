@@ -110,15 +110,21 @@ mod tests {
 }
 
 fn parse_direction_args(args: &[String]) -> Result<Direction, String> {
-    if args.len() != 1 { return Err("expected exactly one direction: left, right, up, or down".into()); }
+    if args.len() != 1 {
+        return Err("expected exactly one direction: left, right, up, or down".into());
+    }
     match args[0].as_str() {
-        "left" => Ok(Direction::Left), "right" => Ok(Direction::Right),
-        "up" => Ok(Direction::Up), "down" => Ok(Direction::Down),
+        "left" => Ok(Direction::Left),
+        "right" => Ok(Direction::Right),
+        "up" => Ok(Direction::Up),
+        "down" => Ok(Direction::Down),
         _ => Err("expected direction: left, right, up, or down".into()),
     }
 }
 pub(super) fn parse_pan(args: &[String]) -> Result<Action, String> {
-    if args.is_empty() || args == ["--help"] || args == ["-h"] { return Ok(Action::PanHelp); }
+    if args.is_empty() || args == ["--help"] || args == ["-h"] {
+        return Ok(Action::PanHelp);
+    }
     Ok(Action::PanField(parse_direction_args(args)?))
 }
 
@@ -129,7 +135,10 @@ mod navigation_tests {
     fn directional_commands_validate_arguments() {
         for name in ["left", "right", "up", "down"] {
             assert!(matches!(parse_pan(&[name.into()]), Ok(Action::PanField(_))));
-            assert!(matches!(parse_monitor(&["transfer".into(), name.into()]), Ok(Action::WindowTransfer(_))));
+            assert!(matches!(
+                parse_monitor(&["transfer".into(), name.into()]),
+                Ok(Action::WindowTransfer(_))
+            ));
         }
         assert!(parse_pan(&["sideways".into()]).is_err());
         assert!(parse_monitor(&["transfer".into(), "left".into(), "extra".into()]).is_err());

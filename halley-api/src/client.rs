@@ -334,10 +334,14 @@ impl Client {
         }
     }
     pub fn transfer_window(&self, direction: Direction) -> Result<()> {
-        self.ack(halley_ipc::Request::Control(halley_ipc::ControlRequest::WindowTransfer(direction_wire(direction))))
+        self.ack(halley_ipc::Request::Control(
+            halley_ipc::ControlRequest::WindowTransfer(direction_wire(direction)),
+        ))
     }
     pub fn pan_field(&self, direction: Direction) -> Result<()> {
-        self.ack(halley_ipc::Request::Control(halley_ipc::ControlRequest::PanField(direction_wire(direction))))
+        self.ack(halley_ipc::Request::Control(
+            halley_ipc::ControlRequest::PanField(direction_wire(direction)),
+        ))
     }
     pub fn focus_monitor(&self, target: MonitorTarget) -> Result<()> {
         let target = match target {

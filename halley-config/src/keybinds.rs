@@ -213,14 +213,29 @@ mod tests {
 
     #[test]
     fn navigation_actions_have_distinct_repeat_and_default_policies() {
-        for direction in [Direction::Left, Direction::Right, Direction::Up, Direction::Down] {
+        for direction in [
+            Direction::Left,
+            Direction::Right,
+            Direction::Up,
+            Direction::Down,
+        ] {
             let pan = Action::PanField(direction);
             let transfer = Action::TransferWindow(direction);
             assert!(pan.repeats_by_default());
             assert!(!transfer.repeats_by_default());
             assert_eq!(pan.default_scope(), BindingScope::Field);
-            assert!(Keybinds::default().binds.iter().any(|bind| bind.action == transfer));
-            assert!(!Keybinds::default().binds.iter().any(|bind| bind.action == pan));
+            assert!(
+                Keybinds::default()
+                    .binds
+                    .iter()
+                    .any(|bind| bind.action == transfer)
+            );
+            assert!(
+                !Keybinds::default()
+                    .binds
+                    .iter()
+                    .any(|bind| bind.action == pan)
+            );
         }
     }
 

@@ -122,10 +122,13 @@ pub(crate) fn transfer_window<D: crate::session::SessionDriver>(
     } else {
         crate::nodes::focus_or_reveal_node(session, id, serial, true);
     }
-    crate::session::pointer::warp_after_transfer(session, (
-        geometry.loc.x as f64 + geometry.size.w as f64 * 0.5,
-        geometry.loc.y as f64 + geometry.size.h as f64 * 0.5,
-    ));
+    crate::session::pointer::warp_after_transfer(
+        session,
+        (
+            geometry.loc.x as f64 + geometry.size.w as f64 * 0.5,
+            geometry.loc.y as f64 + geometry.size.h as f64 * 0.5,
+        ),
+    );
     session.request_redraw();
     Ok(())
 }

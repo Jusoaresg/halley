@@ -277,11 +277,18 @@ fn dispatch_pointer_grab_action<D: SessionDriver>(
                 let geometry = route.visual_geometry.unwrap_or_else(|| window.geometry());
                 let pointer = session.pointer.position();
                 session.interactions.grab = crate::input::grab::Grab::MovePopup {
-                    window: window.clone(), button,
-                    offset: (f64::from(geometry.loc.x) - pointer.0, f64::from(geometry.loc.y) - pointer.1).into(),
+                    window: window.clone(),
+                    button,
+                    offset: (
+                        f64::from(geometry.loc.x) - pointer.0,
+                        f64::from(geometry.loc.y) - pointer.1,
+                    )
+                        .into(),
                 };
-                session.cursor.set_override(crate::cursor::OverrideSource::Grab,
-                    Some(smithay::input::pointer::CursorIcon::Grabbing));
+                session.cursor.set_override(
+                    crate::cursor::OverrideSource::Grab,
+                    Some(smithay::input::pointer::CursorIcon::Grabbing),
+                );
                 return true;
             }
             if !crate::window::accepts_compositor_grab(window)
@@ -2087,8 +2094,11 @@ where
     match &session.interactions.grab {
         crate::input::grab::Grab::MovePopup { window, offset, .. } if motion.is_some() => {
             let window = window.clone();
-            let location: Point<i32, Logical> = ((position_after.0 + offset.x).round() as i32,
-                (position_after.1 + offset.y).round() as i32).into();
+            let location: Point<i32, Logical> = (
+                (position_after.0 + offset.x).round() as i32,
+                (position_after.1 + offset.y).round() as i32,
+            )
+                .into();
             if let Some(surface) = window.x11_surface() {
                 if let Err(err) = surface.move_override_redirect(location) {
                     eventline::warn!("xwayland: pop-out move failed: {err}");
@@ -2577,10 +2587,14 @@ where
         let state = button_event.state();
         let time = button_event.time_msec();
         let serial = SERIAL_COUNTER.next_serial();
-        if let crate::input::grab::Grab::MovePopup { button: owner, .. } = &session.interactions.grab {
+        if let crate::input::grab::Grab::MovePopup { button: owner, .. } =
+            &session.interactions.grab
+        {
             if *owner == button && state == ButtonState::Released {
                 session.interactions.grab = crate::input::grab::Grab::None;
-                session.cursor.set_override(crate::cursor::OverrideSource::Grab, None);
+                session
+                    .cursor
+                    .set_override(crate::cursor::OverrideSource::Grab, None);
                 super::pointer::update_client_state(session, time);
                 session.request_redraw();
             }
@@ -4171,24 +4185,58 @@ mod tests {
 
     #[test]
     fn keyboard_actions_ignore_stationary_pointer_in_both_focus_modes() {
-        for mode in [halley_config::FocusMode::Hover, halley_config::FocusMode::Click] {
-            assert_eq!(window_action_output(super::actions::DispatchOrigin::Keyboard, mode, Some("left"), Some("right")), Some("right".into()));
-            assert_eq!(window_action_output(super::actions::DispatchOrigin::Keyboard, mode, Some("left"), None), None);
+        for mode in [
+            halley_config::FocusMode::Hover,
+            halley_config::FocusMode::Click,
+        ] {
+            assert_eq!(
+                window_action_output(
+                    super::actions::DispatchOrigin::Keyboard,
+                    mode,
+                    Some("left"),
+                    Some("right")
+                ),
+                Some("right".into())
+            );
+            assert_eq!(
+                window_action_output(
+                    super::actions::DispatchOrigin::Keyboard,
+                    mode,
+                    Some("left"),
+                    None
+                ),
+                None
+            );
         }
     }
 
     #[test]
     fn window_actions_follow_pointer_only_in_hover_mode() {
         assert_eq!(
-            window_action_output(super::actions::DispatchOrigin::Other, halley_config::FocusMode::Hover, Some("right"), Some("left"),),
+            window_action_output(
+                super::actions::DispatchOrigin::Other,
+                halley_config::FocusMode::Hover,
+                Some("right"),
+                Some("left"),
+            ),
             Some("right".to_string())
         );
         assert_eq!(
-            window_action_output(super::actions::DispatchOrigin::Other, halley_config::FocusMode::Click, Some("right"), Some("left"),),
+            window_action_output(
+                super::actions::DispatchOrigin::Other,
+                halley_config::FocusMode::Click,
+                Some("right"),
+                Some("left"),
+            ),
             Some("left".to_string())
         );
         assert_eq!(
-            window_action_output(super::actions::DispatchOrigin::Other, halley_config::FocusMode::Hover, None, Some("left")),
+            window_action_output(
+                super::actions::DispatchOrigin::Other,
+                halley_config::FocusMode::Hover,
+                None,
+                Some("left")
+            ),
             Some("left".to_string())
         );
     }
