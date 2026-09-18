@@ -85,9 +85,9 @@ All notable changes to this project will be documented in this file.
   bound session allocation. Remove completed request objects.
 - Require explicit approval of a unique D-Bus connection for accessibility
   keyboard monitoring; owning the public Orca bus name no longer grants access.
-- Wake DPMS outputs with a dedicated, synchronized black-buffer modeset before
-  normal rendering resumes. Retry failed wakes at most twice, cancelling stale
-  retries after a newer power command or while the session is paused.
+- Revert the dedicated synchronized DPMS wake modeset after reports of black
+  screens following suspend. Restore wake through normal frame submission;
+  slow secondary-monitor wake on AMD remains under investigation.
 - Read gamma-control files on a bounded worker instead of the compositor thread.
   Reject pipes and incorrectly sized files without waiting for EOF, and discard
   pending results after a control is destroyed or its output is disabled.
