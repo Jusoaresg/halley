@@ -1008,7 +1008,20 @@ impl<D: SessionDriver> XdgShellHandler for Session<D> {
         let grab =
             wayland::popup::begin_grab(&mut self.wayland.popup_manager, &seat, surface, serial);
         if let Some(grab) = grab {
-            self.popup_grab = wayland::popup::install_grab(self, &seat, grab, serial);
+            let parent_accepts_keyboard_focus = grab
+                .pointer_grab_start_data()
+                .focus
+                .as_ref()
+                .is_none_or(|(root, _)| {
+                    wayland::popup::parent_accepts_keyboard_focus(&self.wayland, root)
+                });
+            self.popup_grab = wayland::popup::install_grab(
+                self,
+                &seat,
+                grab,
+                serial,
+                parent_accepts_keyboard_focus,
+            );
         }
     }
 }

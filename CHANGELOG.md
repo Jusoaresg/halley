@@ -74,6 +74,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Respect layer-shell keyboard interactivity when grabbing popup menus. Waybar
+  tray menus keep their pointer grab without taking keyboard focus from the
+  current app or restoring it to a non-interactive panel after selection.
 - Correct text-input-v3 and input-method-v2 state handling: buffer composition
   until the IME commits, report the application's actual commit count, and reset
   pending state and caret geometry when switching text fields. Avoid duplicate

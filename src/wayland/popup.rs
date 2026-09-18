@@ -214,6 +214,7 @@ pub fn install_grab<D>(
     seat: &Seat<D>,
     mut grab: PopupGrab<D>,
     serial: Serial,
+    parent_accepts_keyboard_focus: bool,
 ) -> Option<PopupGrab<D>>
 where
     D: SeatHandler<PointerFocus = WlSurface> + 'static,
@@ -222,7 +223,7 @@ where
 {
     let ime_keyboard_grabbed = seat.input_method().keyboard_grabbed();
     if let Some(keyboard) = seat.get_keyboard()
-        && popup_takes_keyboard_grab(ime_keyboard_grabbed)
+        && popup_takes_keyboard_grab(ime_keyboard_grabbed, parent_accepts_keyboard_focus)
     {
         if keyboard.is_grabbed()
             && !(keyboard.has_grab(serial)
@@ -258,10 +259,29 @@ pub(crate) fn outside_popup_press<T: PartialEq>(
     pressed && target.is_none_or(|target| !popups.contains(target))
 }
 
-/// Smithay cannot stack keyboard grabs. Keep an active IME grab instead of
-/// replacing it with a popup grab, while still taking the pointer grab.
-pub(crate) fn popup_takes_keyboard_grab(ime_keyboard_grabbed: bool) -> bool {
-    !ime_keyboard_grabbed
+/// Layer popups inherit their root's keyboard eligibility. In particular,
+/// Waybar's non-interactive layer must not acquire a popup keyboard grab that
+/// later restores keyboard focus to the panel. Search every output so this
+/// also applies to panels outside the currently focused output.
+pub fn parent_accepts_keyboard_focus(wayland: &WaylandState, root: &WlSurface) -> bool {
+    wayland
+        .space
+        .outputs()
+        .find_map(|output| {
+            let map = layer_map_for_output(output);
+            map.layer_for_surface(root, WindowSurfaceType::TOPLEVEL)
+                .map(|layer| layer.can_receive_keyboard_focus())
+        })
+        .unwrap_or(true)
+}
+
+/// Keep an active IME grab and respect layer keyboard eligibility. The pointer
+/// grab is installed independently so panel menus still receive mouse input.
+pub(crate) fn popup_takes_keyboard_grab(
+    ime_keyboard_grabbed: bool,
+    parent_accepts_keyboard_focus: bool,
+) -> bool {
+    !ime_keyboard_grabbed && parent_accepts_keyboard_focus
 }
 
 #[cfg(test)]
@@ -288,7 +308,13 @@ mod dismissal_tests {
 
     #[test]
     fn ime_grab_keeps_keyboard_and_still_allows_pointer_grab() {
-        assert!(!popup_takes_keyboard_grab(true));
-        assert!(popup_takes_keyboard_grab(false));
+        assert!(!popup_takes_keyboard_grab(true, true));
+        assert!(!popup_takes_keyboard_grab(true, false));
+        assert!(popup_takes_keyboard_grab(false, true));
+    }
+
+    #[test]
+    fn non_interactive_panel_popup_does_not_take_keyboard_focus() {
+        assert!(!popup_takes_keyboard_grab(false, false));
     }
 }
