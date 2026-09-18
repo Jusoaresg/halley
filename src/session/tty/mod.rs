@@ -506,6 +506,10 @@ pub fn run(explicit_config_path: Option<std::path::PathBuf>) {
         Ok(encoder) => app.screenshot_encoder = Some(encoder),
         Err(err) => eventline::error!("screenshot: failed to start encoder: {err}"),
     }
+    if let Err(err) = crate::wayland::wlr_gamma_control::init_reader(&mut app, &event_loop.handle())
+    {
+        eventline::error!("gamma: failed to start reader: {err}");
+    }
     super::environment::notify_ready();
     if let Some(path) = config_path {
         match crate::config::watch(&event_loop.handle(), path, apply_runtime_config) {

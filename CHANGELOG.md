@@ -73,7 +73,9 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
-
+- Read gamma-control files on a bounded worker instead of the compositor thread.
+  Reject pipes and incorrectly sized files without waiting for EOF, and discard
+  pending results after a control is destroyed or its output is disabled.
 - Safely drain surface-creation requests on rejected session locks, including
   requests pipelined before rejection reaches the client. Rejected lock surfaces
   remain inert and cannot reserve outputs, replace the real lock, or crash the
