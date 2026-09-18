@@ -73,6 +73,8 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Require explicit approval of a unique D-Bus connection for accessibility
+  keyboard monitoring; owning the public Orca bus name no longer grants access.
 - Wake DPMS outputs with a dedicated, synchronized black-buffer modeset before
   normal rendering resumes. Retry failed wakes at most twice, cancelling stale
   retries after a newer power command or while the session is paused.

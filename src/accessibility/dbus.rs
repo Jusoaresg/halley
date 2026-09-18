@@ -33,12 +33,25 @@ pub(super) async fn require_name_owner(
         .get_name_owner(BusName::WellKnown(authorized_name))
         .await
         .map_err(|_| fdo::Error::AccessDenied(denial.to_owned()))?;
-    authorized_name_owner(sender, owner, denial)
+    let owner = authorized_name_owner(sender, owner, denial)?;
+    // A well-known name is freely claimable. Only the unique connection
+    // explicitly pinned by the user when launching Halley may monitor keys.
+    let approved = std::env::var("HALLEY_ACCESSIBILITY_MONITOR").ok();
+    require_approved_connection(&owner, approved.as_deref())?;
+    Ok(owner)
+}
+
+fn require_approved_connection(owner: &OwnedUniqueName, approved: Option<&str>) -> fdo::Result<()> {
+    if approved.is_some_and(|name| name.starts_with(':') && name == owner.as_str()) {
+        Ok(())
+    } else {
+        Err(fdo::Error::AccessDenied("keyboard monitoring requires an explicitly approved unique D-Bus connection in HALLEY_ACCESSIBILITY_MONITOR".into()))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::authorized_name_owner;
+    use super::{authorized_name_owner, require_approved_connection};
     use zbus::{fdo, names::OwnedUniqueName};
 
     #[test]
@@ -58,5 +71,18 @@ mod tests {
             authorized_name_owner(&untrusted.as_ref(), owner, "denied"),
             Err(fdo::Error::AccessDenied(message)) if message == "denied"
         ));
+    }
+    #[test]
+    fn claiming_orca_name_does_not_grant_keyboard_access() {
+        let caller = OwnedUniqueName::try_from(":1.42").unwrap();
+        for approval in [
+            None,
+            Some("org.gnome.Orca.KeyboardMonitor"),
+            Some(":1.41"),
+            Some("*"),
+        ] {
+            assert!(require_approved_connection(&caller, approval).is_err());
+        }
+        assert!(require_approved_connection(&caller, Some(":1.42")).is_ok());
     }
 }
