@@ -135,6 +135,27 @@ impl<D: SessionDriver> State<D> {
         }
     }
 
+    pub fn popup_pointer_motion(&self, window: &Window, position: (f64, f64)) -> bool {
+        let Some(surface) = window.x11_surface() else {
+            return false;
+        };
+        self.control
+            .as_ref()
+            .is_some_and(|control| control.popup_pointer_motion(surface.window_id(), position))
+    }
+
+    pub fn popup_pointer_active(&self) -> bool {
+        self.control
+            .as_ref()
+            .is_some_and(|control| control.popup_pointer_active())
+    }
+
+    pub fn finish_popup_pointer(&self) {
+        if let Some(control) = self.control.as_ref() {
+            control.finish_popup_pointer();
+        }
+    }
+
     pub fn display_name(&self) -> Option<OsString> {
         self.display
             .map(|display| OsString::from(format!(":{display}")))

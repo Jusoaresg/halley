@@ -235,6 +235,9 @@ pub(super) fn relative_motion_allowed<D: SessionDriver>(
     session: &Session<D>,
     route: Option<&crate::input::pointer::PointerRoute>,
 ) -> bool {
+    if session.xwayland.popup_pointer_active() {
+        return false;
+    }
     let Some(route) = route else {
         // PointerHandle::relative_motion ignores its supplied focus and uses
         // the handle's current focus. Do not let a failed hit test reuse a
@@ -330,6 +333,47 @@ pub(super) fn new_constraint_requires_stable_presentation<D: SessionDriver>(
     constraint_requires_stable_presentation(constraints::constraint_kind(surface, pointer))
 }
 
+/// Only the existing standalone pop-out policy and an ordinary left-click
+/// grab opt into root-coordinate delivery. Native clients, attached menus,
+/// compositor drags and pointer constraints retain normal Wayland delivery.
+fn route_popup_root_motion<D: SessionDriver>(
+    session: &Session<D>,
+    pointer: &PointerHandle<Session<D>>,
+    route: &crate::input::pointer::PointerRoute,
+) -> bool {
+    #[cfg(feature = "xwayland")]
+    {
+        if matches!(session.interactions.grab, crate::input::grab::Grab::None)
+            && !has_active_constraint(session)
+            && let crate::input::pointer::PointerTarget::Window(window) = &route.target
+            && crate::window::accepts_popup_move(window)
+            // XTEST emits raw motion too. Preserve the existing protection
+            // against background immersive X11 games consuming UI motion.
+            && !session.wayland.space.elements().any(|other| {
+                other != window && immersive_x11_window(session, other)
+            })
+        {
+            let left_click = pointer
+                .with_grab(|_, grab| {
+                    grab.downcast_ref::<ClickGrab<Session<D>>>().is_some()
+                        && grab.start_data().button == 0x110
+                        && grab.start_data().focus.as_ref().map(|(surface, _)| surface)
+                            == route.focus.as_ref().map(|(surface, _)| surface)
+                })
+                .unwrap_or(false);
+            if left_click
+                && session
+                    .xwayland
+                    .popup_pointer_motion(window, session.pointer.position())
+            {
+                return true;
+            }
+        }
+    }
+    session.xwayland.finish_popup_pointer();
+    false
+}
+
 fn route_and_update_client_focus<D: SessionDriver>(
     session: &mut Session<D>,
     time: u32,
@@ -354,6 +398,10 @@ fn route_and_update_client_focus<D: SessionDriver>(
         if surface_changed {
             reset_client_cursor_image(session);
             constraints::deactivate_before_pointer_focus_change(session, routed_surface);
+        }
+        if route_popup_root_motion(session, &pointer, &route) {
+            session.interactions.client_pointer_route = Some(routed_state);
+            return Some(route);
         }
         pointer.motion(
             session,
