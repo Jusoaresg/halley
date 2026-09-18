@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use zbus::blocking::Connection;
 use zbus::fdo;
 use zbus::interface;
+use zbus::message::Header;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 const VERSION: u32 = 6;
@@ -29,6 +30,27 @@ impl ScreenCastInterface {
             producer,
         }
     }
+    fn require_session(
+        &self,
+        handle: &OwnedObjectPath,
+        owner: &str,
+        app_id: &str,
+    ) -> fdo::Result<()> {
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| fdo::Error::Failed("session lock poisoned".into()))?;
+        let session = sessions
+            .get(handle.as_str())
+            .ok_or_else(|| fdo::Error::InvalidArgs("unknown session".into()))?;
+        crate::auth::same_owner(owner, &session.owner)?;
+        if session.app_id != app_id {
+            return Err(fdo::Error::AccessDenied(
+                "session belongs to another application".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[interface(name = "org.freedesktop.impl.portal.ScreenCast")]
@@ -37,19 +59,24 @@ impl ScreenCastInterface {
         &self,
         handle: OwnedObjectPath,
         session_handle: OwnedObjectPath,
-        _app_id: &str,
+        app_id: &str,
         _options: Vardict,
+        #[zbus(header)] header: Header<'_>,
     ) -> fdo::Result<(u32, Vardict)> {
-        export_request(&self.connection, &handle)?;
+        let owner = crate::auth::frontend(&self.connection, &header)?;
+        let _request = export_request(&self.connection, &handle, owner.as_str())?;
         let session_path = session_handle.to_string();
         let session = self
             .sessions
             .lock()
             .map_err(|_| fdo::Error::Failed("session store lock poisoned".to_string()))?
-            .create(session_path.clone());
+            .create(session_path.clone(), owner.to_string(), app_id.to_string())
+            .map_err(fdo::Error::InvalidArgs)?;
         self.connection.object_server().at(
             session_handle,
             SessionInterface {
+                owner: owner.to_string(),
+                connection: self.connection.clone(),
                 handle: session_path,
                 sessions: self.sessions.clone(),
                 producer: self.producer.clone(),
@@ -64,10 +91,13 @@ impl ScreenCastInterface {
         &self,
         handle: OwnedObjectPath,
         session_handle: OwnedObjectPath,
-        _app_id: &str,
+        app_id: &str,
         options: Vardict,
+        #[zbus(header)] header: Header<'_>,
     ) -> fdo::Result<(u32, Vardict)> {
-        export_request(&self.connection, &handle)?;
+        let owner = crate::auth::frontend(&self.connection, &header)?;
+        let _request = export_request(&self.connection, &handle, owner.as_str())?;
+        self.require_session(&session_handle, owner.as_str(), app_id)?;
         let source_types = extract_u32(&options, "types").unwrap_or(halley_ipc::SOURCE_MONITOR);
         let supported = source_types & AVAILABLE_SOURCE_TYPES;
         if supported == 0 || source_types & !AVAILABLE_SOURCE_TYPES != 0 {
@@ -114,12 +144,15 @@ impl ScreenCastInterface {
         &self,
         handle: OwnedObjectPath,
         session_handle: OwnedObjectPath,
-        _app_id: &str,
+        app_id: &str,
         _parent_window: &str,
         _options: Vardict,
+        #[zbus(header)] header: Header<'_>,
     ) -> fdo::Result<(u32, Vardict)> {
-        export_request(&self.connection, &handle)?;
+        let owner = crate::auth::frontend(&self.connection, &header)?;
+        let _request = export_request(&self.connection, &handle, owner.as_str())?;
         let session_path = session_handle.to_string();
+        self.require_session(&session_handle, owner.as_str(), app_id)?;
         let (source, cursor_mode) = {
             let sessions = self
                 .sessions
@@ -195,6 +228,8 @@ impl ScreenCastInterface {
 }
 
 struct SessionInterface {
+    owner: String,
+    connection: Connection,
     handle: String,
     sessions: Arc<Mutex<crate::session::SessionStore>>,
     producer: Arc<crate::pipewire::Producer>,
@@ -202,8 +237,16 @@ struct SessionInterface {
 
 #[interface(name = "org.freedesktop.impl.portal.Session")]
 impl SessionInterface {
-    fn close(&self) -> fdo::Result<()> {
+    fn close(&self, #[zbus(header)] header: Header<'_>) -> fdo::Result<()> {
+        crate::auth::same_owner(
+            header.sender().map(|name| name.as_str()).unwrap_or(""),
+            &self.owner,
+        )?;
         self.producer.destroy_stream(&self.handle);
+        let _ = self
+            .connection
+            .object_server()
+            .remove::<SessionInterface, _>(self.handle.as_str());
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.remove(&self.handle);
         }
@@ -212,30 +255,52 @@ impl SessionInterface {
 }
 
 struct RequestInterface {
+    owner: String,
     handle: String,
 }
 
 #[interface(name = "org.freedesktop.impl.portal.Request")]
 impl RequestInterface {
-    fn close(&self) -> fdo::Result<()> {
+    fn close(&self, #[zbus(header)] header: Header<'_>) -> fdo::Result<()> {
+        crate::auth::same_owner(
+            header.sender().map(|name| name.as_str()).unwrap_or(""),
+            &self.owner,
+        )?;
         let _ = crate::compositor::cancel_source(self.handle.clone());
         Ok(())
     }
 }
 
-fn export_request(connection: &Connection, handle: &OwnedObjectPath) -> fdo::Result<()> {
-    match connection.object_server().at(
+struct RequestGuard {
+    connection: Connection,
+    handle: OwnedObjectPath,
+}
+impl Drop for RequestGuard {
+    fn drop(&mut self) {
+        let _ = self
+            .connection
+            .object_server()
+            .remove::<RequestInterface, _>(self.handle.clone());
+    }
+}
+fn export_request(
+    connection: &Connection,
+    handle: &OwnedObjectPath,
+    owner: &str,
+) -> fdo::Result<RequestGuard> {
+    if !connection.object_server().at(
         handle.clone(),
         RequestInterface {
             handle: handle.to_string(),
+            owner: owner.into(),
         },
-    ) {
-        Ok(_) => Ok(()),
-        Err(err) => {
-            eventline::warn!("could not export portal request {handle}: {err}");
-            Ok(())
-        }
+    )? {
+        return Err(fdo::Error::InvalidArgs("request already exists".into()));
     }
+    Ok(RequestGuard {
+        connection: connection.clone(),
+        handle: handle.clone(),
+    })
 }
 
 fn extract_u32(dict: &Vardict, key: &str) -> Option<u32> {

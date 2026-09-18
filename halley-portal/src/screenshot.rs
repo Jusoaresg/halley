@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use zbus::blocking::Connection;
 use zbus::fdo;
 use zbus::interface;
+use zbus::message::Header;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 use halley_ipc::{ScreenshotResponse, ScreenshotTarget};
@@ -33,8 +34,10 @@ impl ScreenshotInterface {
         app_id: &str,
         _parent_window: &str,
         options: Vardict,
+        #[zbus(header)] header: Header<'_>,
     ) -> fdo::Result<(u32, Vardict)> {
-        export_request(&self.connection, &handle)?;
+        let owner = crate::auth::frontend(&self.connection, &header)?;
+        let _request = export_request(&self.connection, &handle, owner.as_str())?;
         let interactive = extract_bool(&options, "interactive").unwrap_or(false);
         let target = match extract_u32(&options, "target") {
             Some(TARGET_SCREEN) => ScreenshotTarget::Screen,
@@ -71,8 +74,10 @@ impl ScreenshotInterface {
         _app_id: &str,
         _parent_window: &str,
         _options: Vardict,
+        #[zbus(header)] header: Header<'_>,
     ) -> fdo::Result<(u32, Vardict)> {
-        export_request(&self.connection, &handle)?;
+        let owner = crate::auth::frontend(&self.connection, &header)?;
+        let _request = export_request(&self.connection, &handle, owner.as_str())?;
         Ok((2, Vardict::new()))
     }
 
@@ -88,12 +93,17 @@ impl ScreenshotInterface {
 }
 
 struct RequestInterface {
+    owner: String,
     request_handle: String,
 }
 
 #[interface(name = "org.freedesktop.impl.portal.Request")]
 impl RequestInterface {
-    fn close(&self) -> fdo::Result<()> {
+    fn close(&self, #[zbus(header)] header: Header<'_>) -> fdo::Result<()> {
+        crate::auth::same_owner(
+            header.sender().map(|name| name.as_str()).unwrap_or(""),
+            &self.owner,
+        )?;
         if let Err(err) = crate::compositor::cancel_screenshot(self.request_handle.clone()) {
             eventline::debug!("portal request close: {err}");
         }
@@ -101,17 +111,37 @@ impl RequestInterface {
     }
 }
 
-fn export_request(connection: &Connection, handle: &OwnedObjectPath) -> fdo::Result<()> {
-    let interface = RequestInterface {
-        request_handle: handle.to_string(),
-    };
-    match connection.object_server().at(handle.clone(), interface) {
-        Ok(_) => Ok(()),
-        Err(err) => {
-            eventline::warn!("could not export portal request {handle}: {err}");
-            Ok(())
-        }
+struct RequestGuard {
+    connection: Connection,
+    handle: OwnedObjectPath,
+}
+impl Drop for RequestGuard {
+    fn drop(&mut self) {
+        let _ = self
+            .connection
+            .object_server()
+            .remove::<RequestInterface, _>(self.handle.clone());
     }
+}
+
+fn export_request(
+    connection: &Connection,
+    handle: &OwnedObjectPath,
+    owner: &str,
+) -> fdo::Result<RequestGuard> {
+    if !connection.object_server().at(
+        handle.clone(),
+        RequestInterface {
+            request_handle: handle.to_string(),
+            owner: owner.into(),
+        },
+    )? {
+        return Err(fdo::Error::InvalidArgs("request already exists".into()));
+    }
+    Ok(RequestGuard {
+        connection: connection.clone(),
+        handle: handle.clone(),
+    })
 }
 
 fn extract_u32(dict: &Vardict, key: &str) -> Option<u32> {

@@ -73,6 +73,9 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Authenticate portal backend calls against the frontend bus owner and executable,
+  pin requests and sessions to their creator, enforce application ownership, and
+  bound session allocation. Remove completed request objects.
 - Require explicit approval of a unique D-Bus connection for accessibility
   keyboard monitoring; owning the public Orca bus name no longer grants access.
 - Wake DPMS outputs with a dedicated, synchronized black-buffer modeset before

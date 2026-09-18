@@ -1,3 +1,4 @@
+mod auth;
 mod compositor;
 mod pipewire;
 mod screencast;
