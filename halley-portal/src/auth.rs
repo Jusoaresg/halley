@@ -1,4 +1,6 @@
 //! Authenticate the portal frontend, then pin its unique bus identity on objects.
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
 use zbus::names::{BusName, OwnedUniqueName};
 use zbus::{blocking::Connection, fdo, message::Header};
 
@@ -19,7 +21,7 @@ pub fn frontend(connection: &Connection, header: &Header<'_>) -> fdo::Result<Own
     if uid != unsafe { libc::geteuid() } {
         return Err(denied());
     }
-    let executable = std::fs::read_link(format!("/proc/{pid}/exe")).map_err(|_| denied())?;
+    let executable = std::fs::metadata(format!("/proc/{pid}/exe")).map_err(|_| denied())?;
     let approved = std::env::var_os("HALLEY_PORTAL_FRONTEND").map(std::path::PathBuf::from);
     let paths = approved.map(|path| vec![path]).unwrap_or_else(|| {
         vec![
@@ -30,11 +32,21 @@ pub fn frontend(connection: &Connection, header: &Header<'_>) -> fdo::Result<Own
     if !paths
         .iter()
         .filter(|path| path.is_absolute())
-        .any(|path| std::fs::canonicalize(path).is_ok_and(|path| path == executable))
+        .any(|path| matches_executable(&executable, path))
     {
         return Err(denied());
     }
     Ok(owner)
+}
+
+fn matches_executable(actual: &std::fs::Metadata, approved: &Path) -> bool {
+    approved.is_absolute()
+        && std::fs::metadata(approved).is_ok_and(|expected| {
+            actual.is_file()
+                && expected.is_file()
+                && actual.dev() == expected.dev()
+                && actual.ino() == expected.ino()
+        })
 }
 
 pub fn same_owner(sender: &str, owner: &str) -> fdo::Result<()> {
@@ -66,5 +78,65 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn executable_grants_compare_file_identity_not_namespace_path_names() {
+        let actual = std::fs::metadata("/proc/self/exe").unwrap();
+        assert!(matches_executable(
+            &actual,
+            &std::env::current_exe().unwrap()
+        ));
+        assert!(!matches_executable(&actual, Path::new("/bin/sh")));
+        assert!(!matches_executable(
+            &actual,
+            Path::new("xdg-desktop-portal")
+        ));
+    }
+
+    #[test]
+    fn an_untrusted_bus_client_cannot_gain_access_by_claiming_the_portal_name() {
+        // Use a private bus: never request portal names on the user's session bus.
+        use std::io::BufRead;
+        use std::process::{Command, Stdio};
+        struct Bus(std::process::Child);
+        impl Drop for Bus {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut bus = Bus(Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address=1"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("dbus-daemon required for security tests"));
+        let mut address = String::new();
+        std::io::BufReader::new(bus.0.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        let owner = zbus::blocking::connection::Builder::address(address.trim())
+            .unwrap()
+            .build()
+            .unwrap();
+        let other = zbus::blocking::connection::Builder::address(address.trim())
+            .unwrap()
+            .build()
+            .unwrap();
+        owner
+            .request_name("org.freedesktop.portal.Desktop")
+            .unwrap();
+        for client in [&owner, &other] {
+            let message = zbus::Message::method_call("/portal", "Screenshot")
+                .unwrap()
+                .sender(client.unique_name().unwrap())
+                .unwrap()
+                .build(&())
+                .unwrap();
+            assert!(matches!(
+                frontend(&other, &message.header()),
+                Err(fdo::Error::AccessDenied(_))
+            ));
+        }
     }
 }

@@ -79,7 +79,8 @@ All notable changes to this project will be documented in this file.
 - Deny raw Wayland screen capture, clipboard data control, virtual keyboards,
   and input-method registration by default. Grant each capability separately
   to explicitly approved executable identities at connection admission.
-- Authenticate portal backend calls against the frontend bus owner and executable,
+- Authenticate portal backend calls against the frontend bus owner and executable
+  file identity (including across mount namespaces),
   pin requests and sessions to their creator, enforce application ownership, and
   bound session allocation. Remove completed request objects.
 - Require explicit approval of a unique D-Bus connection for accessibility
