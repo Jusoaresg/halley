@@ -9,7 +9,7 @@ mod output;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
 use smithay::backend::allocator::{Format, Fourcc};
-use smithay::backend::drm::compositor::PrimaryPlaneElement;
+use smithay::backend::drm::compositor::{FrameFlags, PrimaryPlaneElement};
 use smithay::backend::drm::exporter::gbm::{GbmFramebufferExporter, NodeFilter};
 use smithay::backend::drm::output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements};
 use smithay::backend::drm::{
@@ -102,6 +102,7 @@ pub struct AppliedDpmsChange {
 
 #[derive(Debug)]
 pub struct AppliedDpms {
+    pub waking: bool,
     pub changes: Vec<AppliedDpmsChange>,
     pub error: Option<String>,
 }
@@ -690,18 +691,36 @@ impl TtyBackend {
             if entry.dpms_enabled == target_enabled {
                 continue;
             }
-            // Powering on touches no DRM state at all - the CRTC is re-enabled
-            // as a side effect of the first ordinary frame's atomic commit, so
-            // the enable and its scan-out buffer land together. Old halley and
-            // niri both do exactly nothing here; `reset_state()` belongs on the
-            // VT-switch path (see `resume()`), not this one, and calling it here
-            // cost a ~25s event-loop stall on every wake.
-            //
-            // Nothing is needed to force that first frame to be non-empty
-            // either: `clear()` wipes the surface's *current* mode and connector
-            // set, so `commit_pending()` stays true, which makes the next
-            // prepared frame a full (not partial) one, and a full frame's
-            // `is_empty()` is false by construction.
+            // Wake independently of scene rendering, with a freshly rendered
+            // black buffer (also safe while locked). clear() retired old frames
+            // and their fences on power-off; never reuse a client's scanout.
+            if target_enabled {
+                let wake = (|| -> Result<(), Box<dyn Error>> {
+                    let frame = entry
+                        .drm_output
+                        .render_frame::<_, SolidColorRenderElement>(
+                            &mut self.renderer,
+                            &[],
+                            crate::render::SESSION_LOCK_COLOR,
+                            FrameFlags::empty(),
+                        )?;
+                    if let PrimaryPlaneElement::Swapchain(element) = &frame.primary_element {
+                        // Finish our own buffer before the modeset; no client
+                        // acquire fence is involved in this power transition.
+                        element.sync.wait()?;
+                    }
+                    entry.drm_output.commit_frame()?;
+                    Ok(())
+                })();
+                if let Err(err) = wake {
+                    failures.push(format!("{}: {err}", entry.output.name()));
+                    continue;
+                }
+                entry
+                    .drm_output
+                    .with_compositor(|compositor| compositor.reset_buffer_ages());
+                entry.direct_scanout_active = None;
+            }
             if !target_enabled {
                 set_entry_vrr(entry, false);
                 let clear = entry
@@ -737,6 +756,7 @@ impl TtyBackend {
             );
         }
         Ok(AppliedDpms {
+            waking: target_enabled,
             changes,
             error: (!failures.is_empty()).then(|| {
                 format!(

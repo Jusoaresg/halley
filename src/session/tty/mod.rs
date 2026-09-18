@@ -47,6 +47,7 @@ struct TtyDriver {
     output_frames: HashMap<Output, OutputFrameState>,
     pause_reasons: PauseReasons,
     pending_output_config: Option<Vec<halley_config::OutputConfig>>,
+    dpms_generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -223,11 +224,34 @@ impl super::SessionDriver for TtyDriver {
 
 type TtyApp = super::Session<TtyDriver>;
 
+fn dpms_retry_delay(refresh_rates: impl IntoIterator<Item = i32>) -> Duration {
+    refresh_rates
+        .into_iter()
+        .filter(|rate| *rate > 0)
+        .map(|rate| Duration::from_secs_f64(2000.0 / f64::from(rate)))
+        .max()
+        .unwrap_or(Duration::from_millis(32))
+}
+
+fn dpms_retry_is_current(expected: u64, current: u64, paused: bool) -> bool {
+    expected == current && !paused
+}
+
 impl TtyDriver {
     fn apply_dpms_command(
         &mut self,
         command: halley_ipc::DpmsCommand,
         output: Option<&str>,
+    ) -> Result<(), String> {
+        self.dpms_generation = self.dpms_generation.wrapping_add(1);
+        self.apply_dpms_attempt(command, output, 0)
+    }
+
+    fn apply_dpms_attempt(
+        &mut self,
+        command: halley_ipc::DpmsCommand,
+        output: Option<&str>,
+        attempt: u8,
     ) -> Result<(), String> {
         let applied = self.backend.apply_dpms(command, output)?;
         let now = crate::frame_clock::monotonic_now();
@@ -242,6 +266,36 @@ impl TtyDriver {
                     self.loop_handle.remove(token);
                 }
             }
+        }
+        if applied.waking && applied.error.is_some() && attempt < 2 {
+            let generation = self.dpms_generation;
+            let output = output.map(str::to_owned);
+            // Roughly two frames of the slowest display. Never sleep on the
+            // event loop, and never let an old retry undo a newer DPMS command.
+            let delay = dpms_retry_delay(
+                self.backend
+                    .outputs()
+                    .filter_map(|output| output.current_mode())
+                    .map(|mode| mode.refresh),
+            );
+            self.loop_handle
+                .insert_source(Timer::from_duration(delay), move |_, _, app| {
+                    if dpms_retry_is_current(
+                        generation,
+                        app.driver.dpms_generation,
+                        app.driver.pause_reasons.any(),
+                    ) {
+                        if let Err(err) = app.driver.apply_dpms_attempt(
+                            halley_ipc::DpmsCommand::On,
+                            output.as_deref(),
+                            attempt + 1,
+                        ) {
+                            eventline::warn!("tty dpms: wake retry failed: {err}");
+                        }
+                    }
+                    TimeoutAction::Drop
+                })
+                .map_err(|err| format!("failed to schedule DPMS wake retry: {err}"))?;
         }
         match applied.error {
             Some(error) => Err(error),
@@ -343,6 +397,7 @@ pub fn run(explicit_config_path: Option<std::path::PathBuf>) {
             system_sleep: false,
         },
         pending_output_config: None,
+        dpms_generation: 0,
     };
     let mut wayland = TtyApp::create_wayland_state(dh.clone(), &mut driver);
     for output in &outputs {
@@ -1548,5 +1603,25 @@ mod pause_tests {
 
         reasons.session = false;
         assert!(!reasons.any());
+    }
+}
+
+#[cfg(test)]
+mod dpms_wake_tests {
+    use super::*;
+
+    #[test]
+    fn retries_wait_two_frames_of_the_slower_output() {
+        let delay = dpms_retry_delay([179_998, 74_930]);
+        assert!(delay >= Duration::from_millis(26));
+        assert!(delay < Duration::from_millis(28));
+        assert_eq!(dpms_retry_delay([0, -1]), Duration::from_millis(32));
+    }
+
+    #[test]
+    fn a_new_power_command_or_paused_session_cancels_old_wakes() {
+        assert!(dpms_retry_is_current(7, 7, false));
+        assert!(!dpms_retry_is_current(7, 8, false));
+        assert!(!dpms_retry_is_current(7, 7, true));
     }
 }

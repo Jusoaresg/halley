@@ -73,6 +73,9 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Wake DPMS outputs with a dedicated, synchronized black-buffer modeset before
+  normal rendering resumes. Retry failed wakes at most twice, cancelling stale
+  retries after a newer power command or while the session is paused.
 - Read gamma-control files on a bounded worker instead of the compositor thread.
   Reject pipes and incorrectly sized files without waiting for EOF, and discard
   pending results after a control is destroyed or its output is disabled.
