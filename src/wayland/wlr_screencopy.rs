@@ -163,6 +163,10 @@ impl Drop for Screencopy {
 }
 
 impl<D: SessionDriver> GlobalDispatch<ZwlrScreencopyManagerV1, (), Session<D>> for Session<D> {
+    fn can_view(client: Client, _: &()) -> bool {
+        super::permissions::allowed(&client, super::permissions::Capability::Capture)
+    }
+
     fn bind(
         session: &mut Session<D>,
         _display: &DisplayHandle,

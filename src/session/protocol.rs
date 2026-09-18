@@ -92,11 +92,14 @@ pub fn init_wayland_listener<D: SessionDriver>(
     event_loop
         .handle()
         .insert_source(listening_socket, move |client_stream, _, session| {
-            if let Err(err) = session
-                .wayland
-                .display_handle
-                .insert_client(client_stream, Arc::new(ClientState::default()))
-            {
+            let permissions = crate::wayland::permissions::Permissions::for_socket(&client_stream);
+            if let Err(err) = session.wayland.display_handle.insert_client(
+                client_stream,
+                Arc::new(ClientState {
+                    permissions,
+                    ..Default::default()
+                }),
+            ) {
                 eventline::warn!("failed to insert new wayland client: {err}");
             }
         })

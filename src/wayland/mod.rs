@@ -8,6 +8,7 @@ pub mod frame_callbacks;
 pub mod fullscreen;
 pub mod idle_inhibit;
 pub mod layer_shell;
+pub mod permissions;
 pub mod popup;
 pub mod presentation;
 pub mod selection;
@@ -389,6 +390,7 @@ impl WaylandState {
 /// Per-client Wayland state - one instance per connected client.
 #[derive(Default)]
 pub struct ClientState {
+    pub permissions: permissions::Permissions,
     pub compositor_state: CompositorClientState,
 }
 

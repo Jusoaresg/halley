@@ -73,6 +73,9 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Deny raw Wayland screen capture, clipboard data control, virtual keyboards,
+  and input-method registration by default. Grant each capability separately
+  to explicitly approved executable identities at connection admission.
 - Authenticate portal backend calls against the frontend bus owner and executable,
   pin requests and sessions to their creator, enforce application ownership, and
   bound session allocation. Remove completed request objects.

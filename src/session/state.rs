@@ -42,7 +42,7 @@ use crate::cursor::CursorManager;
 use crate::input::Keyboard;
 use crate::input::pointer::Pointer;
 use crate::presentation::camera::OutputCameras;
-use crate::wayland::{ClientState, WaylandState};
+use crate::wayland::WaylandState;
 
 /// Rendering and buffer-import mechanics supplied by a session backend.
 pub trait RenderDriver: 'static {
@@ -203,7 +203,12 @@ impl<D: SessionDriver> Session<D> {
         let ext_data_control_state = DataControlState::new::<Self, _>(
             &display_handle,
             Some(&primary_selection_state),
-            |_| true,
+            |client| {
+                crate::wayland::permissions::allowed(
+                    client,
+                    crate::wayland::permissions::Capability::Clipboard,
+                )
+            },
         );
 
         WaylandState::new(
@@ -224,11 +229,17 @@ impl<D: SessionDriver> Session<D> {
             PointerGesturesState::new::<Self>(&display_handle),
             CursorShapeManagerState::new::<Self>(&display_handle),
             VirtualKeyboardManagerState::new::<Self, _>(&display_handle, |client| {
-                client.get_data::<ClientState>().is_some()
+                crate::wayland::permissions::allowed(
+                    client,
+                    crate::wayland::permissions::Capability::VirtualKeyboard,
+                )
             }),
             TextInputManagerState::new::<Self>(&display_handle),
             InputMethodManagerState::new::<Self, _>(&display_handle, |client| {
-                client.get_data::<ClientState>().is_some()
+                crate::wayland::permissions::allowed(
+                    client,
+                    crate::wayland::permissions::Capability::InputMethod,
+                )
             }),
             KeyboardShortcutsInhibitState::new::<Self>(&display_handle),
             ShmState::new::<Self>(&display_handle, vec![]),
