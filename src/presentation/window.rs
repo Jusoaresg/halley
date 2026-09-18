@@ -695,7 +695,7 @@ impl WindowPresentation {
     }
 }
 
-fn subsurface_offset_from_root(
+pub(crate) fn subsurface_offset_from_root(
     surface: &WlSurface,
     expected_root: &WlSurface,
 ) -> Option<Point<i32, Logical>> {

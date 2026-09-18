@@ -1,5 +1,8 @@
 mod constraints;
 
+#[cfg(test)]
+mod click_grab_tests;
+
 pub(super) use constraints::PointerConstraintLifecycle;
 
 use smithay::input::pointer::{ClickGrab, MotionEvent, PointerHandle, RelativeMotionEvent};
@@ -82,9 +85,9 @@ fn desktop_refresh_allowed(blockers: DesktopRefreshBlockers) -> bool {
 }
 
 /// Smithay's default click grab retains the mouse-down focus origin. A
-/// client-positioned popup can move underneath that grab, so rebase its current
-/// local coordinates onto that fixed origin before Smithay subtracts it.
-fn popup_grab_location(
+/// grabbed surface can move underneath that grab, so rebase its current local
+/// coordinates onto that fixed origin before Smithay subtracts it.
+fn click_grab_location(
     grab_origin: Point<f64, Logical>,
     current_source: Point<f64, Logical>,
     current_origin: Point<f64, Logical>,
@@ -92,9 +95,41 @@ fn popup_grab_location(
     grab_origin + (current_source - current_origin)
 }
 
-fn route_grabbed_popup<D: SessionDriver>(
+pub(super) fn client_click_grab_active<D: SessionDriver>(session: &Session<D>) -> bool {
+    session.seat.get_pointer().is_some_and(|pointer| {
+        pointer
+            .with_grab(|_, grab| grab.downcast_ref::<ClickGrab<Session<D>>>().is_some())
+            .unwrap_or(false)
+    })
+}
+
+/// Locate a held surface without hit-testing: implicit grabs keep receiving
+/// out-of-bounds motion, including outside shaped input regions.
+fn grabbed_surface_offset(
+    root: &WlSurface,
+    surface: &WlSurface,
+    popup_origin: Point<i32, Logical>,
+) -> Option<(Point<i32, Logical>, bool)> {
+    use smithay::desktop::PopupManager;
+    if let Some(offset) = crate::presentation::window::subsurface_offset_from_root(surface, root) {
+        return Some((offset, false));
+    }
+    PopupManager::popups_for_surface(root).find_map(|(popup, location)| {
+        let offset =
+            crate::presentation::window::subsurface_offset_from_root(surface, popup.wl_surface())?;
+        Some((
+            popup_origin + location - popup.geometry().loc + offset,
+            true,
+        ))
+    })
+}
+
+fn route_grabbed_client<D: SessionDriver>(
     session: &Session<D>,
 ) -> Option<crate::input::pointer::PointerRoute> {
+    use crate::input::pointer::{PointerRoute, PointerTarget};
+    use smithay::desktop::layer_map_for_output;
+
     if !matches!(session.interactions.grab, crate::input::grab::Grab::None) {
         return None;
     }
@@ -103,50 +138,74 @@ fn route_grabbed_popup<D: SessionDriver>(
         grab.downcast_ref::<ClickGrab<Session<D>>>()
             .and_then(|_| grab.start_data().focus.clone())
     })??;
-    let window = session.wayland.space.elements().find(|window| {
-        crate::xwayland::is_override_redirect(window)
-            && window
-                .wl_surface()
-                .is_some_and(|candidate| candidate.as_ref() == &surface)
-    })?;
-    let output = session.wayland.space.outputs().find(|output| {
-        crate::wayland::window_is_on_output(window, output, session.driver.primary_output())
-    })?;
-    let presentation = crate::presentation::window::WindowPresentation::for_window(
-        &session.wayland.space,
-        &session.cameras,
-        Some(&session.clusters),
-        Some(&session.nodes),
-        &session.window_animations,
-        &session.fullscreen,
-        &session.maximize,
-        &session.settings.decorations,
-        &session.settings.font,
-        window,
-        output,
-        crate::frame_clock::monotonic_now(),
-    )?;
-    let source = presentation.source_from_screen(session.pointer.position().into());
-    Some(crate::input::pointer::PointerRoute {
-        output: output.clone(),
-        location: popup_grab_location(
-            grab_origin,
-            source,
-            presentation.root_source_origin().to_f64(),
-        ),
-        focus: Some((surface, grab_origin)),
-        target: crate::input::pointer::PointerTarget::Window(window.clone()),
-        visual_geometry: Some(presentation.visual_geometry()),
-        // A held client click keeps its original target, including outside its
-        // shaped input region. Normal hit testing resumes after button release.
-        is_desktop_popup: true,
-    })
+    let screen = Point::from(session.pointer.position());
+    for window in session.wayland.space.elements() {
+        let Some(root) = window.wl_surface() else {
+            continue;
+        };
+        let Some((offset, popup)) = grabbed_surface_offset(&root, &surface, window.geometry().loc)
+        else {
+            continue;
+        };
+        let output = session.wayland.space.outputs().find(|output| {
+            crate::wayland::window_is_on_output(window, output, session.driver.primary_output())
+        })?;
+        let presentation = crate::presentation::window::WindowPresentation::for_window(
+            &session.wayland.space,
+            &session.cameras,
+            Some(&session.clusters),
+            Some(&session.nodes),
+            &session.window_animations,
+            &session.fullscreen,
+            &session.maximize,
+            &session.settings.decorations,
+            &session.settings.font,
+            window,
+            output,
+            crate::frame_clock::monotonic_now(),
+        )?;
+        return Some(PointerRoute {
+            output: output.clone(),
+            location: click_grab_location(
+                grab_origin,
+                presentation.source_from_screen(screen),
+                (presentation.root_source_origin() + offset).to_f64(),
+            ),
+            focus: Some((surface, grab_origin)),
+            target: PointerTarget::Window(window.clone()),
+            visual_geometry: Some(presentation.visual_geometry()),
+            is_desktop_popup: popup || crate::xwayland::is_override_redirect(window),
+        });
+    }
+    for output in session.wayland.space.outputs() {
+        let Some(geometry) = session.wayland.space.output_geometry(output) else {
+            continue;
+        };
+        let map = layer_map_for_output(output);
+        for layer in map.layers() {
+            let Some((offset, _)) =
+                grabbed_surface_offset(layer.wl_surface(), &surface, (0, 0).into())
+            else {
+                continue;
+            };
+            let origin = geometry.loc + map.layer_geometry(layer)?.loc + offset;
+            return Some(PointerRoute {
+                output: output.clone(),
+                location: click_grab_location(grab_origin, screen, origin.to_f64()),
+                focus: Some((surface, grab_origin)),
+                target: PointerTarget::Layer(layer.clone()),
+                visual_geometry: None,
+                is_desktop_popup: false,
+            });
+        }
+    }
+    None
 }
 
 pub(super) fn route_client<D: SessionDriver>(
     session: &Session<D>,
 ) -> Option<crate::input::pointer::PointerRoute> {
-    if let Some(route) = route_grabbed_popup(session) {
+    if let Some(route) = route_grabbed_client(session) {
         return Some(route);
     }
     let mut route = crate::input::pointer::route_to_client(
@@ -723,7 +782,7 @@ mod tests {
         let pointer_screen = (1800.0, 1100.0);
         for origin in [(1400.0, -300.0), (1410.0, -290.0), (2245.0, -1350.0)] {
             let event =
-                super::popup_grab_location(grab_origin, pointer_screen.into(), origin.into());
+                super::click_grab_location(grab_origin, pointer_screen.into(), origin.into());
             // Smithay subtracts its frozen origin; XWayland reconstructs root
             // pointer coordinates using the window's current X11 origin.
             let client_local = event - grab_origin;
@@ -753,7 +812,7 @@ mod tests {
                 world_origin.0 + (screen.0 - screen_origin.0) / scale,
                 world_origin.1 + (screen.1 - screen_origin.1) / scale,
             );
-            let event = super::popup_grab_location(grab_origin, source.into(), world_origin.into());
+            let event = super::click_grab_location(grab_origin, source.into(), world_origin.into());
             assert_eq!(event - grab_origin, expected_local.into());
         }
     }
@@ -762,7 +821,7 @@ mod tests {
     fn held_popup_click_keeps_outside_coordinates_without_clamping() {
         let grab_origin = (500.0, -300.0).into();
         let current_origin = (700.0, -900.0).into();
-        let event = super::popup_grab_location(grab_origin, (600.0, 2100.0).into(), current_origin);
+        let event = super::click_grab_location(grab_origin, (600.0, 2100.0).into(), current_origin);
         assert_eq!(event - grab_origin, (-100.0, 3000.0).into());
     }
 

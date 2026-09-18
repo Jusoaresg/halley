@@ -2472,6 +2472,11 @@ where
             );
         }
         super::pointer::finish_frame(session, &pointer_handle);
+        // Keep shell hover cursors and landmarks from replacing the client's
+        // cursor while its implicit grab owns pointer delivery.
+        if super::pointer::client_click_grab_active(session) {
+            return;
+        }
         if let Some(route) = route.as_ref() {
             super::focus::update_hover(session, route, SERIAL_COUNTER.next_serial());
         }
@@ -3711,6 +3716,7 @@ where
             ) {
                 super::closing::start_steam_client_close_control(session, &window);
             }
+            let had_click_grab = super::pointer::client_click_grab_active(session);
             pointer_handle.button(
                 session,
                 &ButtonEvent {
@@ -3720,6 +3726,11 @@ where
                     state,
                 },
             );
+            if had_click_grab && !super::pointer::client_click_grab_active(session) {
+                // The last release goes to the owner, then normal hit-testing
+                // resumes even if the physical pointer stops moving.
+                super::pointer::route_for_motion(session, time);
+            }
         }
         super::pointer::finish_frame(session, &pointer_handle);
     }

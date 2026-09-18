@@ -73,6 +73,10 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Keep ordinary client click-drags in the grabbed surface's coordinate space
+  across windows, panels, output cameras, and moving subsurfaces/popups. Preserve
+  the client cursor while held and restore normal pointer routing immediately
+  after the last button release.
 - Keep input-method-v2 candidate popups hidden until text input is enabled,
   send the current caret rectangle when each popup is created, and update all
   live candidate surfaces. Destroyed IMEs no longer leave popups to be revived
