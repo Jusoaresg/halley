@@ -33,6 +33,7 @@ pub(crate) struct InputMethod {
     pub popup_handle: PopupHandle,
     pub keyboard_grab: InputMethodKeyboardGrab,
     pending: PendingText,
+    suspended: bool,
 }
 
 #[derive(Default, Debug)]
@@ -79,7 +80,55 @@ impl InputMethodHandle {
 
     /// Whether there's an active instance of input-method.
     pub(crate) fn has_instance(&self) -> bool {
-        self.inner.lock().unwrap().instance.is_some()
+        let inner = self.inner.lock().unwrap();
+        inner.instance.is_some() && !inner.suspended
+    }
+
+    /// Suspend input-method access during secure compositor input (such as a lock).
+    /// Existing protocol objects survive, but their grab is inactive and text-input
+    /// state is hidden until resumed. New grab objects can be created while suspended
+    /// without becoming active; this lets an IME survive a lock/unlock cycle.
+    pub fn set_suspended<D: SeatHandler + 'static>(&self, state: &mut D, suspended: bool) {
+        let object = {
+            let inner = self.inner.lock().unwrap();
+            if inner.suspended == suspended {
+                return;
+            }
+            inner
+                .instance
+                .as_ref()
+                .map(|instance| instance.object.clone())
+        };
+        if suspended {
+            self.deactivate_input_method(state);
+        }
+        self.inner.lock().unwrap().suspended = suspended;
+        let Some(object) = object else {
+            return;
+        };
+        let data = object.data::<InputMethodUserData<D>>().unwrap();
+        if suspended {
+            data.text_input_handle.leave();
+            let owns_grab = data
+                .keyboard_handle
+                .with_grab(|_, grab| grab.downcast_ref::<InputMethodKeyboardGrab>().is_some())
+                .unwrap_or(false);
+            if owns_grab {
+                data.keyboard_handle.unset_grab(state);
+            }
+        } else {
+            data.text_input_handle.enter();
+            if self.keyboard_grabbed() {
+                let grab = self.inner.lock().unwrap().keyboard_grab.clone();
+                data.keyboard_handle
+                    .set_grab(state, grab, SERIAL_COUNTER.next_serial());
+            }
+        }
+    }
+
+    /// Whether input-method access is suspended for secure compositor input.
+    pub fn is_suspended(&self) -> bool {
+        self.inner.lock().unwrap().suspended
     }
 
     /// Callback function to access the input method object
@@ -88,6 +137,9 @@ impl InputMethodHandle {
         F: FnOnce(&mut Instance),
     {
         let mut inner = self.inner.lock().unwrap();
+        if inner.suspended {
+            return;
+        }
         if let Some(instance) = inner.instance.as_mut() {
             f(instance);
         }
@@ -252,6 +304,17 @@ where
             }
             return;
         }
+        if data.handle.is_suspended()
+            && matches!(
+                request,
+                zwp_input_method_v2::Request::CommitString { .. }
+                    | zwp_input_method_v2::Request::SetPreeditString { .. }
+                    | zwp_input_method_v2::Request::DeleteSurroundingText { .. }
+                    | zwp_input_method_v2::Request::Commit { .. }
+            )
+        {
+            return;
+        }
         match request {
             zwp_input_method_v2::Request::CommitString { text } => {
                 data.handle.inner.lock().unwrap().pending.commit = Some(text);
@@ -298,7 +361,11 @@ where
                     return;
                 }
 
-                let parent = match data.text_input_handle.focus().clone() {
+                let parent = match data
+                    .text_input_handle
+                    .focus()
+                    .filter(|_| !data.handle.is_suspended())
+                {
                     Some(parent) => {
                         let location = state.parent_geometry(&parent);
                         Some(PopupParent {
@@ -325,11 +392,13 @@ where
             }
             zwp_input_method_v2::Request::GrabKeyboard { keyboard } => {
                 let input_method = data.handle.inner.lock().unwrap();
-                data.keyboard_handle.set_grab(
-                    state,
-                    input_method.keyboard_grab.clone(),
-                    SERIAL_COUNTER.next_serial(),
-                );
+                if !input_method.suspended {
+                    data.keyboard_handle.set_grab(
+                        state,
+                        input_method.keyboard_grab.clone(),
+                        SERIAL_COUNTER.next_serial(),
+                    );
+                }
                 let instance = data_init.init(
                     keyboard,
                     InputMethodKeyboardUserData {

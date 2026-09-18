@@ -225,7 +225,7 @@ where
                         dismiss_popup: D::dismiss_popup,
                     },
                 );
-                if handle.add_instance(&instance) {
+                if handle.add_instance(&instance) && !handle.is_suspended() {
                     text_input_handle.enter();
                 }
             }

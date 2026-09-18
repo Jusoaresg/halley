@@ -13,6 +13,7 @@ pub mod presentation;
 pub mod selection;
 pub mod session_lock;
 pub mod text_input;
+mod virtual_keyboard;
 pub mod wlr_gamma_control;
 pub mod wlr_output_management;
 pub mod wlr_screencopy;

@@ -755,6 +755,9 @@ impl<D: SessionDriver> XWaylandKeyboardGrabHandler for Session<D> {
         &self,
         surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
     ) -> Option<Self::KeyboardFocus> {
+        if self.session_lock.active() {
+            return None;
+        }
         self.wayland
             .space
             .elements()

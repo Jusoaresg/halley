@@ -69,7 +69,6 @@ use smithay::{
     delegate_pointer_constraints, delegate_primary_selection, delegate_relative_pointer,
     delegate_pointer_gestures, delegate_presentation, delegate_seat, delegate_shm, delegate_viewporter,
     delegate_text_input_manager,
-    delegate_virtual_keyboard_manager,
     delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell,
 };
 
@@ -1004,6 +1003,10 @@ impl<D: SessionDriver> XdgShellHandler for Session<D> {
     }
 
     fn grab(&mut self, surface: PopupSurface, seat: WlSeat, serial: Serial) {
+        if self.session_lock.active() {
+            surface.send_popup_done();
+            return;
+        }
         let seat = Seat::<Self>::from_resource(&seat).expect("popup grab used an unknown wl_seat");
         let grab =
             wayland::popup::begin_grab(&mut self.wayland.popup_manager, &seat, surface, serial);
@@ -1387,7 +1390,6 @@ delegate_presentation!(@<D: SessionDriver> Session<D>);
 delegate_relative_pointer!(@<D: SessionDriver> Session<D>);
 delegate_pointer_constraints!(@<D: SessionDriver> Session<D>);
 delegate_pointer_gestures!(@<D: SessionDriver> Session<D>);
-delegate_virtual_keyboard_manager!(@<D: SessionDriver> Session<D>);
 delegate_text_input_manager!(@<D: SessionDriver> Session<D>);
 delegate_input_method_manager!(@<D: SessionDriver> Session<D>);
 delegate_keyboard_shortcuts_inhibit!(@<D: SessionDriver> Session<D>);

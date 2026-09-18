@@ -74,6 +74,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Isolate lock-screen input from ordinary clients: suspend IME keyboard grabs
+  and text state until unlock, retire existing client grabs, and reject popup,
+  XWayland, and virtual-keyboard input paths while locked. Existing IMEs resume
+  after unlock without requiring a restart.
 - Respect layer-shell keyboard interactivity when grabbing popup menus. Waybar
   tray menus keep their pointer grab without taking keyboard focus from the
   current app or restoring it to a non-interactive panel after selection.

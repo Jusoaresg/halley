@@ -25,6 +25,7 @@ use smithay::reexports::wayland_server::{
 use smithay::utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size};
 use smithay::wayland::compositor::{send_surface_state, with_states};
 use smithay::wayland::fractional_scale::with_fractional_scale;
+use smithay::wayland::input_method::InputMethodSeat;
 use smithay::wayland::session_lock::{
     ExtLockSurfaceUserData, LockSurface, SessionLockHandler, SessionLockManagerGlobalData,
     SessionLockManagerState, SessionLockState, SessionLocker,
@@ -462,6 +463,20 @@ impl<D: SessionDriver> Dispatch<ExtSessionLockV1, SessionLockState> for Session<
 }
 
 pub fn enter_secure_mode<D: SessionDriver>(session: &mut Session<D>) {
+    session
+        .seat
+        .input_method()
+        .clone()
+        .set_suspended(session, true);
+    if let Some(mut grab) = session.popup_grab.take() {
+        grab.ungrab(smithay::desktop::PopupUngrabStrategy::All);
+    }
+    if let Some(pointer) = session.seat.get_pointer() {
+        pointer.unset_grab(session, SERIAL_COUNTER.next_serial(), 0);
+    }
+    if let Some(keyboard) = session.seat.get_keyboard() {
+        keyboard.unset_grab(session);
+    }
     session.cancel_exit_confirmation();
     crate::capture::cancel_selected(session);
     crate::shell::apogee::cancel(session);
@@ -492,6 +507,11 @@ pub fn leave_secure_mode<D: SessionDriver>(session: &mut Session<D>) {
     }
     session.cursor.clear_overrides();
     crate::session::sync_keyboard_focus(session, SERIAL_COUNTER.next_serial());
+    session
+        .seat
+        .input_method()
+        .clone()
+        .set_suspended(session, false);
 }
 
 fn cancel_client_input<D: SessionDriver>(session: &mut Session<D>) {

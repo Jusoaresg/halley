@@ -6,7 +6,9 @@ use smithay::{
     utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
         compositor::{CompositorClientState, CompositorHandler, CompositorState},
-        input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface},
+        input_method::{
+            InputMethodHandler, InputMethodManagerState, InputMethodSeat, PopupSurface,
+        },
         text_input::TextInputManagerState,
     },
 };
@@ -22,14 +24,14 @@ use std::{
 };
 use wayland_client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle, delegate_noop,
-    protocol::{wl_compositor, wl_registry, wl_seat, wl_surface},
+    protocol::{wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_surface},
 };
 use wayland_protocols::wp::text_input::zv3::client::{
     zwp_text_input_manager_v3 as tim, zwp_text_input_v3 as ti,
 };
 use wayland_protocols_misc::zwp_input_method_v2::client::{
-    zwp_input_method_manager_v2 as imm, zwp_input_method_v2 as im,
-    zwp_input_popup_surface_v2 as popup,
+    zwp_input_method_keyboard_grab_v2 as ime_keyboard, zwp_input_method_manager_v2 as imm,
+    zwp_input_method_v2 as im, zwp_input_popup_surface_v2 as popup,
 };
 
 struct Server {
@@ -82,6 +84,8 @@ delegate_input_method_manager!(Server);
 #[derive(Default)]
 struct Client {
     globals: HashMap<String, (u32, u32)>,
+    ime_keys: usize,
+    client_keys: usize,
     text: Vec<(u32, ti::Event)>,
     ime: Vec<(u32, im::Event)>,
     popup_rectangles: Vec<(i32, i32, i32, i32)>,
@@ -149,6 +153,39 @@ impl Dispatch<popup::ZwpInputPopupSurfaceV2, ()> for Client {
         }
     }
 }
+impl Dispatch<ime_keyboard::ZwpInputMethodKeyboardGrabV2, ()> for Client {
+    fn event(
+        state: &mut Self,
+        _: &ime_keyboard::ZwpInputMethodKeyboardGrabV2,
+        event: ime_keyboard::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if matches!(event, ime_keyboard::Event::Key { .. }) {
+            state.ime_keys += 1;
+        }
+    }
+}
+impl Dispatch<wl_keyboard::WlKeyboard, ()> for Client {
+    fn event(
+        state: &mut Self,
+        _: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if matches!(event, wl_keyboard::Event::Key { .. }) {
+            state.client_keys += 1;
+        }
+    }
+}
+
+enum Control {
+    Suspend(bool),
+    Key,
+}
 delegate_noop!(Client: ignore wl_compositor::WlCompositor);
 delegate_noop!(Client: ignore wl_surface::WlSurface);
 delegate_noop!(Client: ignore wl_seat::WlSeat);
@@ -165,6 +202,7 @@ struct Fixture {
     input: ti::ZwpTextInputV3,
     ime: im::ZwpInputMethodV2,
     surface: wl_surface::WlSurface,
+    control: std::sync::mpsc::Sender<(Control, std::sync::mpsc::SyncSender<()>)>,
     stop: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,
 }
@@ -188,9 +226,40 @@ impl Fixture {
         };
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();
+        let (control, controls) =
+            std::sync::mpsc::channel::<(Control, std::sync::mpsc::SyncSender<()>)>();
         let worker = thread::spawn(move || {
             while !stopped.load(Ordering::Relaxed) {
                 display.dispatch_clients(&mut server).unwrap();
+                while let Ok((command, done)) = controls.try_recv() {
+                    match command {
+                        Control::Suspend(value) => {
+                            server
+                                .seat
+                                .input_method()
+                                .clone()
+                                .set_suspended(&mut server, value);
+                        }
+                        Control::Key => {
+                            let keyboard = server.seat.get_keyboard().unwrap();
+                            for state in [
+                                smithay::backend::input::KeyState::Pressed,
+                                smithay::backend::input::KeyState::Released,
+                            ] {
+                                keyboard.input::<(), _>(
+                                    &mut server,
+                                    38u32.into(),
+                                    state,
+                                    SERIAL_COUNTER.next_serial(),
+                                    0,
+                                    |_, _, _| smithay::input::keyboard::FilterResult::Forward,
+                                );
+                            }
+                        }
+                    }
+                    display.flush_clients().unwrap();
+                    let _ = done.send(());
+                }
                 display.flush_clients().unwrap();
                 thread::sleep(Duration::from_millis(1));
             }
@@ -224,11 +293,19 @@ impl Fixture {
             input,
             ime,
             surface,
+            control,
             stop,
             worker: Some(worker),
         };
         fixture.clear();
         fixture
+    }
+    fn command(&mut self, command: Control) {
+        self.sync();
+        let (done, wait) = std::sync::mpsc::sync_channel(1);
+        self.control.send((command, done)).unwrap();
+        wait.recv_timeout(Duration::from_secs(5)).unwrap();
+        self.sync();
     }
     fn sync(&mut self) {
         self.queue.roundtrip(&mut self.state).unwrap();
@@ -530,4 +607,79 @@ fn reenable_clears_the_previous_fields_popup_rectangle() {
     f.input.commit();
     f.sync();
     assert_eq!(f.state.popup_rectangles.last(), Some(&(0, 0, 0, 0)));
+}
+
+#[test]
+fn secure_input_hides_keys_and_text_from_existing_ime_then_resumes() {
+    let mut f = Fixture::new();
+    let _client_keyboard = f.seat.get_keyboard(&f.queue.handle(), ());
+    let _grab = f.ime.grab_keyboard(&f.queue.handle(), ());
+    f.enable();
+    f.command(Control::Key);
+    assert_eq!(f.state.ime_keys, 2);
+    assert_eq!(f.state.client_keys, 0);
+    f.command(Control::Suspend(true));
+    f.clear();
+    f.input.enable();
+    f.input.set_surrounding_text("secret".into(), 6, 6);
+    f.input.commit();
+    f.ime.commit_string("injected".into());
+    f.ime.commit(0);
+    f.command(Control::Key);
+    assert_eq!(f.state.ime_keys, 2, "IME received secure keys");
+    assert_eq!(
+        f.state.client_keys, 2,
+        "focused secure client did not receive keys"
+    );
+    assert!(f.state.ime.is_empty(), "IME received secure text state");
+    assert!(
+        f.state.text.is_empty(),
+        "IME injected text during suspension"
+    );
+    f.command(Control::Suspend(false));
+    f.command(Control::Key);
+    assert_eq!(f.state.ime_keys, 4, "IME did not resume");
+    assert_eq!(f.state.client_keys, 2);
+}
+
+#[test]
+fn ime_cannot_reacquire_keyboard_during_secure_input() {
+    let mut f = Fixture::new();
+    let _client_keyboard = f.seat.get_keyboard(&f.queue.handle(), ());
+    f.command(Control::Suspend(true));
+    let _grab = f.ime.grab_keyboard(&f.queue.handle(), ());
+    f.command(Control::Key);
+    assert_eq!(f.state.ime_keys, 0);
+    assert_eq!(f.state.client_keys, 2);
+    f.command(Control::Suspend(false));
+    f.command(Control::Key);
+    assert_eq!(f.state.ime_keys, 2);
+}
+
+#[test]
+fn ime_started_during_secure_input_waits_until_resume() {
+    let mut f = Fixture::new();
+    f.ime.destroy();
+    f.sync();
+    f.command(Control::Suspend(true));
+    f.clear();
+    f.ime = f
+        .ime_manager
+        .get_input_method(&f.seat, &f.queue.handle(), ());
+    let _grab = f.ime.grab_keyboard(&f.queue.handle(), ());
+    f.command(Control::Key);
+    assert_eq!(f.state.ime_keys, 0);
+    assert!(
+        f.state.text.is_empty(),
+        "new IME exposed focus while locked"
+    );
+    f.command(Control::Suspend(false));
+    f.command(Control::Key);
+    assert_eq!(f.state.ime_keys, 2);
+    assert!(
+        f.state
+            .text
+            .iter()
+            .any(|(_, event)| matches!(event, ti::Event::Enter { .. }))
+    );
 }
