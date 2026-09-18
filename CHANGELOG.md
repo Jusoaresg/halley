@@ -73,6 +73,8 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Release input-method-v2 keyboard grabs when their IME is destroyed, and keep
+  stale grab objects from releasing a replacement grab after reconnection.
 - Bound IPC connections and request deadlines, release disconnected subscribers
   and capture buffers, and enforce per-connection/global DMA-BUF quotas and
   ownership. Close received descriptors even when ancillary data is truncated.

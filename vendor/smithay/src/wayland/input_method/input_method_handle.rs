@@ -454,7 +454,13 @@ where
             .is_some_and(|instance| instance.object == *input_method);
         if is_current {
             data.handle.deactivate_input_method(state);
-            data.handle.inner.lock().unwrap().instance = None;
+            let grab = {
+                let mut inner = data.handle.inner.lock().unwrap();
+                inner.instance = None;
+                // Old child objects must not share the next IME's grab state.
+                std::mem::take(&mut inner.keyboard_grab)
+            };
+            grab.release(state, &data.keyboard_handle);
             data.text_input_handle.leave();
         }
     }

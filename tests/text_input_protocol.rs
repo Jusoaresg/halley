@@ -826,3 +826,44 @@ fn rejected_lock_surface_requests_remain_inert_without_crashing_or_reserving_out
         "rejected lock reserved the output"
     );
 }
+
+#[test]
+fn destroying_ime_releases_keyboard_and_old_children_cannot_break_reconnection() {
+    let mut f = Fixture::new();
+    let _keyboard = f.seat.get_keyboard(&f.queue.handle(), ());
+    let old_grab = f.ime.grab_keyboard(&f.queue.handle(), ());
+    f.enable();
+    f.command(Control::Key);
+    assert_eq!(f.state.ime_keys, 2);
+    f.ime.destroy();
+    f.command(Control::Key);
+    assert_eq!(f.state.ime_keys, 2, "destroyed IME retained the keyboard");
+    assert_eq!(f.state.client_keys, 2);
+    f.ime = f
+        .ime_manager
+        .get_input_method(&f.seat, &f.queue.handle(), ());
+    let _new_grab = f.ime.grab_keyboard(&f.queue.handle(), ());
+    old_grab.release();
+    f.command(Control::Key);
+    assert_eq!(
+        f.state.ime_keys, 4,
+        "old child released the replacement IME grab"
+    );
+    assert_eq!(f.state.client_keys, 2);
+}
+
+#[test]
+fn releasing_superseded_keyboard_object_preserves_current_grab() {
+    let mut f = Fixture::new();
+    let _keyboard = f.seat.get_keyboard(&f.queue.handle(), ());
+    let old_grab = f.ime.grab_keyboard(&f.queue.handle(), ());
+    let new_grab = f.ime.grab_keyboard(&f.queue.handle(), ());
+    old_grab.release();
+    f.command(Control::Key);
+    assert_eq!(f.state.ime_keys, 2);
+    assert_eq!(f.state.client_keys, 0);
+    new_grab.release();
+    f.command(Control::Key);
+    assert_eq!(f.state.ime_keys, 2);
+    assert_eq!(f.state.client_keys, 2);
+}

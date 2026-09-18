@@ -20,3 +20,8 @@ synchronous XWM request paths are not converted by this patch.
 An explicit override-redirect position-only configure method supports user-driven
 compositor moves of standalone pop-outs. It sends no synchronous confirmation
 request and leaves the normal configure guard unchanged.
+
+Input-method-v2 keyboard grabs are released when their owning IME is destroyed.
+Child grab teardown checks object and compositor-grab ownership so releasing an
+old object cannot clear a newer grab, including after an IME reconnects. Real
+Wayland request/event regressions live in `tests/text_input_protocol.rs`.
