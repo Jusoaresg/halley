@@ -15,7 +15,7 @@ use super::InputMethodManagerState;
 /// Handle to a popup surface
 #[derive(Debug, Clone, Default)]
 pub struct PopupHandle {
-    pub surface: Option<PopupSurface>,
+    pub surfaces: Vec<PopupSurface>,
     pub rectangle: Rectangle<i32, Logical>,
 }
 

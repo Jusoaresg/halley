@@ -1,7 +1,7 @@
 # Wayland protocol support
 
 Halley advertises `zwp_text_input_manager_v3` version 1 and
-`zwp_input_method_manager_v2` version 1. Native Wayland clients bind
+`zwp_input_method_manager_v2` version 1 (`input-method-unstable-v2`). Native Wayland clients bind
 text-input to send surrounding text and receive preedit and committed
 composition. Input-method is restricted to ordinary compositor clients
 (the same `ClientState` filter as virtual-keyboard), so fcitx and ibus
@@ -15,7 +15,11 @@ requests and events are not advertised.
 
 Halley's vendored Smithay buffers IME edits until commit, uses each text-input
 object's commit count for `done`, resets pending state on enable and focus loss,
-and rejects additional IMEs without disturbing the active one. Socket-level
+and rejects additional IMEs without disturbing the active one. Candidate popups
+are visible only while a text input is enabled; all live popups receive caret
+updates, including the current rectangle at creation. Destroying an IME releases
+its keyboard grab and removes its popups. Old keyboard objects cannot release a
+replacement grab. Socket-level
 regressions in `tests/text_input_protocol.rs` exercise these transitions with
 real Wayland requests and events. Run them with
 `cargo test -p halley --test text_input_protocol`. These tests validate protocol
@@ -147,3 +151,11 @@ They are independent: data-control, idle notification/inhibition, presentation
 timing, output control, capture, and blur do not require one another, and
 clients that do not bind them follow Halley's existing rendering, clipboard,
 and input paths.
+
+To test input-method-v2, start the newly installed Halley in a fresh compositor
+session, run a Wayland-capable IME, and focus a native Wayland text-input-v3
+application. Check preedit, candidate selection, committed text, moving between
+fields, and restarting the IME. An already running compositor keeps its old
+protocol implementation until it is restarted. `wayland-info` should list
+`zwp_input_method_manager_v2` at version 1; the `v2` in the interface name is the
+protocol generation, not the advertised interface version.

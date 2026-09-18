@@ -73,6 +73,10 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Keep input-method-v2 candidate popups hidden until text input is enabled,
+  send the current caret rectangle when each popup is created, and update all
+  live candidate surfaces. Destroyed IMEs no longer leave popups to be revived
+  by a replacement IME.
 - Release input-method-v2 keyboard grabs when their IME is destroyed, and keep
   stale grab objects from releasing a replacement grab after reconnection.
 - Bound IPC connections and request deadlines, release disconnected subscribers

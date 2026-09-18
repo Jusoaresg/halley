@@ -169,17 +169,14 @@ impl InputMethodHandle {
         let mut inner = self.inner.lock().unwrap();
         inner.popup_handle.rectangle = rect;
 
-        let mut popup_surface = match inner.popup_handle.surface.clone() {
-            Some(popup_surface) => popup_surface,
-            None => return,
-        };
-
-        popup_surface.set_text_input_rectangle(rect.loc.x, rect.loc.y, rect.size.w, rect.size.h);
-
-        if let Some(instance) = &inner.instance {
-            let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
-            (data.popup_repositioned)(state, popup_surface);
-        };
+        inner.popup_handle.surfaces.retain(PopupSurface::alive);
+        for mut popup_surface in inner.popup_handle.surfaces.clone() {
+            popup_surface.set_text_input_rectangle(rect.loc.x, rect.loc.y, rect.size.w, rect.size.h);
+            if let Some(instance) = &inner.instance {
+                let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
+                (data.popup_repositioned)(state, popup_surface);
+            }
+        }
     }
 
     /// Activate input method on the given surface.
@@ -193,7 +190,8 @@ impl InputMethodHandle {
             im.popup_handle.rectangle = Rectangle::default();
             if let Some(instance) = im.instance.as_ref() {
                 instance.object.activate();
-                if let Some(popup) = im.popup_handle.surface.as_mut() {
+                im.popup_handle.surfaces.retain(PopupSurface::alive);
+                for popup in &mut im.popup_handle.surfaces {
                     let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
                     let location = (data.popup_geometry_callback)(state, surface);
                     // Remove old popup.
@@ -221,7 +219,8 @@ impl InputMethodHandle {
             if let Some(instance) = im.instance.as_mut() {
                 instance.object.deactivate();
                 instance.done();
-                if let Some(popup) = im.popup_handle.surface.as_mut() {
+                im.popup_handle.surfaces.retain(PopupSurface::alive);
+                for popup in &mut im.popup_handle.surfaces {
                     let data = instance.object.data::<InputMethodUserData<D>>().unwrap();
                     if popup.get_parent().is_some() {
                         (data.dismiss_popup)(state, popup.clone());
@@ -361,20 +360,15 @@ where
                     return;
                 }
 
-                let parent = match data
-                    .text_input_handle
-                    .focus()
-                    .filter(|_| !data.handle.is_suspended())
-                {
-                    Some(parent) => {
-                        let location = state.parent_geometry(&parent);
-                        Some(PopupParent {
-                            surface: parent,
-                            location,
-                        })
-                    }
-                    None => None,
-                };
+                let mut parent = None;
+                if !data.handle.is_suspended() {
+                    data.text_input_handle.with_active_text_input(|_, surface| {
+                        parent = Some(PopupParent {
+                            surface: surface.clone(),
+                            location: state.parent_geometry(surface),
+                        });
+                    });
+                }
                 let mut input_method = data.handle.inner.lock().unwrap();
 
                 let instance = data_init.init(
@@ -384,8 +378,11 @@ where
                     },
                 );
                 let popup_rect = Arc::new(Mutex::new(input_method.popup_handle.rectangle));
-                let popup = PopupSurface::new(instance, surface, popup_rect, parent);
-                input_method.popup_handle.surface = Some(popup.clone());
+                let mut popup = PopupSurface::new(instance, surface, popup_rect, parent);
+                let rect = input_method.popup_handle.rectangle;
+                popup.set_text_input_rectangle(rect.loc.x, rect.loc.y, rect.size.w, rect.size.h);
+                input_method.popup_handle.surfaces.retain(PopupSurface::alive);
+                input_method.popup_handle.surfaces.push(popup.clone());
                 if popup.get_parent().is_some() {
                     state.new_popup(popup);
                 }
@@ -457,6 +454,14 @@ where
             let grab = {
                 let mut inner = data.handle.inner.lock().unwrap();
                 inner.instance = None;
+                for popup in inner.popup_handle.surfaces.drain(..) {
+                    popup.surface_role
+                        .data::<InputMethodPopupSurfaceUserData>()
+                        .unwrap()
+                        .alive_tracker
+                        .destroy_notify();
+                }
+                inner.popup_handle.rectangle = Rectangle::default();
                 // Old child objects must not share the next IME's grab state.
                 std::mem::take(&mut inner.keyboard_grab)
             };

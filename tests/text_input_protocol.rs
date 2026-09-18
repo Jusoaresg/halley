@@ -50,6 +50,7 @@ use wayland_protocols::ext::session_lock::v1::client::{
 };
 
 struct Server {
+    popups: Arc<std::sync::Mutex<Vec<PopupSurface>>>,
     compositor: CompositorState,
     lock_state: SessionLockManagerState,
     locked: bool,
@@ -133,8 +134,12 @@ impl SeatHandler for Server {
     fn cursor_image(&mut self, _: &Seat<Self>, _: CursorImageStatus) {}
 }
 impl InputMethodHandler for Server {
-    fn new_popup(&mut self, _: PopupSurface) {}
-    fn dismiss_popup(&mut self, _: PopupSurface) {}
+    fn new_popup(&mut self, popup: PopupSurface) {
+        self.popups.lock().unwrap().push(popup);
+    }
+    fn dismiss_popup(&mut self, popup: PopupSurface) {
+        self.popups.lock().unwrap().retain(|old| old != &popup);
+    }
     fn popup_repositioned(&mut self, _: PopupSurface) {}
     fn parent_geometry(&self, _: &WlSurface) -> Rectangle<i32, Logical> {
         Rectangle::default()
@@ -290,6 +295,7 @@ delegate_noop!(Client: ignore tim::ZwpTextInputManagerV3);
 delegate_noop!(Client: ignore imm::ZwpInputMethodManagerV2);
 
 struct Fixture {
+    popups: Arc<std::sync::Mutex<Vec<PopupSurface>>>,
     state: Client,
     queue: EventQueue<Client>,
     compositor: wl_compositor::WlCompositor,
@@ -330,7 +336,9 @@ impl Fixture {
         let _ime = InputMethodManagerState::new::<Server, _>(&dh, |_| true);
         dh.insert_client(server_socket, Arc::new(ClientData::default()))
             .unwrap();
+        let popups = Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut server = Server {
+            popups: popups.clone(),
             lock_state,
             locked: false,
             rejected_locks: Default::default(),
@@ -401,6 +409,7 @@ impl Fixture {
         surface.commit();
         queue.roundtrip(&mut state).unwrap();
         let mut fixture = Self {
+            popups,
             state,
             queue,
             compositor,
@@ -866,4 +875,67 @@ fn releasing_superseded_keyboard_object_preserves_current_grab() {
     f.command(Control::Key);
     assert_eq!(f.state.ime_keys, 2);
     assert_eq!(f.state.client_keys, 2);
+}
+
+#[test]
+fn ime_popups_follow_activation_and_all_receive_the_caret_rectangle() {
+    let mut f = Fixture::new();
+    let first_surface = f.compositor.create_surface(&f.queue.handle(), ());
+    let _first = f
+        .ime
+        .get_input_popup_surface(&first_surface, &f.queue.handle(), ());
+    f.sync();
+    assert!(
+        f.popups.lock().unwrap().is_empty(),
+        "inactive IME popup became visible"
+    );
+    f.enable();
+    assert_eq!(f.popups.lock().unwrap().len(), 1);
+    f.input.set_cursor_rectangle(25, 40, 3, 18);
+    f.input.commit();
+    f.sync();
+    f.state.popup_rectangles.clear();
+    let second_surface = f.compositor.create_surface(&f.queue.handle(), ());
+    let _second = f
+        .ime
+        .get_input_popup_surface(&second_surface, &f.queue.handle(), ());
+    f.sync();
+    assert_eq!(f.state.popup_rectangles, vec![(25, 40, 3, 18)]);
+    assert_eq!(f.popups.lock().unwrap().len(), 2);
+    f.state.popup_rectangles.clear();
+    f.input.set_cursor_rectangle(30, 50, 2, 16);
+    f.input.commit();
+    f.sync();
+    assert_eq!(f.state.popup_rectangles, vec![(30, 50, 2, 16); 2]);
+    f.input.disable();
+    f.input.commit();
+    f.sync();
+    assert!(f.popups.lock().unwrap().is_empty());
+    f.enable();
+    assert_eq!(f.popups.lock().unwrap().len(), 2);
+    f.ime.destroy();
+    f.sync();
+    assert!(f.popups.lock().unwrap().is_empty());
+    f.ime = f
+        .ime_manager
+        .get_input_method(&f.seat, &f.queue.handle(), ());
+    f.sync();
+    f.enable();
+    assert!(
+        f.popups.lock().unwrap().is_empty(),
+        "replacement IME revived old popups"
+    );
+}
+
+#[test]
+fn destroyed_popup_is_not_reactivated() {
+    let mut f = Fixture::new();
+    let surface = f.compositor.create_surface(&f.queue.handle(), ());
+    let popup = f
+        .ime
+        .get_input_popup_surface(&surface, &f.queue.handle(), ());
+    popup.destroy();
+    f.sync();
+    f.enable();
+    assert!(f.popups.lock().unwrap().is_empty());
 }
