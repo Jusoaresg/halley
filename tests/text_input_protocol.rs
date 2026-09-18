@@ -34,11 +34,75 @@ use wayland_protocols_misc::zwp_input_method_v2::client::{
     zwp_input_method_v2 as im, zwp_input_popup_surface_v2 as popup,
 };
 
+use smithay::reexports::wayland_protocols::ext::session_lock::v1::server::{
+    ext_session_lock_manager_v1::ExtSessionLockManagerV1,
+    ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
+    ext_session_lock_v1::{ExtSessionLockV1, Request as LockRequest},
+};
+use smithay::reexports::wayland_server::Resource;
+use smithay::wayland::session_lock::{
+    ExtLockSurfaceUserData, LockSurface, SessionLockHandler, SessionLockManagerGlobalData,
+    SessionLockManagerState, SessionLockState, SessionLocker,
+};
+use wayland_protocols::ext::session_lock::v1::client::{
+    ext_session_lock_manager_v1 as lock_manager, ext_session_lock_surface_v1 as lock_surface,
+    ext_session_lock_v1 as lock,
+};
+
 struct Server {
     compositor: CompositorState,
+    lock_state: SessionLockManagerState,
+    locked: bool,
+    rejected_locks: std::collections::HashSet<server::backend::ObjectId>,
     seats: SeatState<Self>,
     seat: Seat<Self>,
 }
+impl SessionLockHandler for Server {
+    fn lock_state(&mut self) -> &mut SessionLockManagerState {
+        &mut self.lock_state
+    }
+    fn lock(&mut self, locker: SessionLocker) {
+        if self.locked {
+            self.rejected_locks.insert(locker.ext_session_lock().id());
+        } else {
+            self.locked = true;
+            locker.lock();
+        }
+    }
+    fn unlock(&mut self) {
+        self.locked = false;
+    }
+    fn new_surface(&mut self, surface: LockSurface, _: server::protocol::wl_output::WlOutput) {
+        surface.with_pending_state(|state| state.size = Some((100, 100).into()));
+    }
+}
+smithay::reexports::wayland_server::delegate_global_dispatch!(Server: [ExtSessionLockManagerV1: SessionLockManagerGlobalData] => SessionLockManagerState);
+smithay::reexports::wayland_server::delegate_dispatch!(Server: [ExtSessionLockManagerV1: ()] => SessionLockManagerState);
+smithay::reexports::wayland_server::delegate_dispatch!(Server: [ExtSessionLockSurfaceV1: ExtLockSurfaceUserData] => SessionLockManagerState);
+impl server::Dispatch<ExtSessionLockV1, SessionLockState> for Server {
+    fn request(
+        state: &mut Self,
+        client: &server::Client,
+        lock: &ExtSessionLockV1,
+        request: LockRequest,
+        data: &SessionLockState,
+        display: &server::DisplayHandle,
+        init: &mut server::DataInit<'_, Self>,
+    ) {
+        if state.rejected_locks.contains(&lock.id()) {
+            SessionLockManagerState::rejected_request(lock, request, init);
+        } else {
+            <SessionLockManagerState as server::Dispatch<
+                ExtSessionLockV1,
+                SessionLockState,
+                Self,
+            >>::request(state, client, lock, request, data, display, init);
+        }
+    }
+}
+impl smithay::wayland::output::OutputHandler for Server {}
+smithay::delegate_output!(Server);
+
 #[derive(Default)]
 struct ClientData(CompositorClientState);
 impl server::backend::ClientData for ClientData {
@@ -84,6 +148,8 @@ delegate_input_method_manager!(Server);
 #[derive(Default)]
 struct Client {
     globals: HashMap<String, (u32, u32)>,
+    lock_configures: usize,
+    lock_finished: usize,
     ime_keys: usize,
     client_keys: usize,
     text: Vec<(u32, ti::Event)>,
@@ -182,6 +248,37 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for Client {
     }
 }
 
+impl Dispatch<lock::ExtSessionLockV1, ()> for Client {
+    fn event(
+        state: &mut Self,
+        _: &lock::ExtSessionLockV1,
+        event: lock::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if matches!(event, lock::Event::Finished) {
+            state.lock_finished += 1;
+        }
+    }
+}
+impl Dispatch<lock_surface::ExtSessionLockSurfaceV1, ()> for Client {
+    fn event(
+        state: &mut Self,
+        _: &lock_surface::ExtSessionLockSurfaceV1,
+        event: lock_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if matches!(event, lock_surface::Event::Configure { .. }) {
+            state.lock_configures += 1;
+        }
+    }
+}
+delegate_noop!(Client: ignore lock_manager::ExtSessionLockManagerV1);
+delegate_noop!(Client: ignore wayland_client::protocol::wl_output::WlOutput);
+
 enum Control {
     Suspend(bool),
     Key,
@@ -196,6 +293,8 @@ struct Fixture {
     state: Client,
     queue: EventQueue<Client>,
     compositor: wl_compositor::WlCompositor,
+    lock_manager: lock_manager::ExtSessionLockManagerV1,
+    output: wayland_client::protocol::wl_output::WlOutput,
     seat: wl_seat::WlSeat,
     manager: tim::ZwpTextInputManagerV3,
     ime_manager: imm::ZwpInputMethodManagerV2,
@@ -212,6 +311,18 @@ impl Fixture {
         let mut display = Display::<Server>::new().unwrap();
         let mut dh = display.handle();
         let compositor = CompositorState::new::<Server>(&dh);
+        let lock_state = SessionLockManagerState::new::<Server, _>(&dh, |_| true);
+        let output = smithay::output::Output::new(
+            "test".into(),
+            smithay::output::PhysicalProperties {
+                size: (100, 100).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: "test".into(),
+                model: "test".into(),
+                serial_number: "test".into(),
+            },
+        );
+        output.create_global::<Server>(&dh);
         let mut seats = SeatState::new();
         let mut seat = seats.new_wl_seat(&dh, "test");
         seat.add_keyboard(Default::default(), 200, 25).unwrap();
@@ -220,6 +331,9 @@ impl Fixture {
         dh.insert_client(server_socket, Arc::new(ClientData::default()))
             .unwrap();
         let mut server = Server {
+            lock_state,
+            locked: false,
+            rejected_locks: Default::default(),
             compositor,
             seats,
             seat,
@@ -229,6 +343,7 @@ impl Fixture {
         let (control, controls) =
             std::sync::mpsc::channel::<(Control, std::sync::mpsc::SyncSender<()>)>();
         let worker = thread::spawn(move || {
+            let _output = output;
             while !stopped.load(Ordering::Relaxed) {
                 display.dispatch_clients(&mut server).unwrap();
                 while let Ok((command, done)) = controls.try_recv() {
@@ -278,6 +393,8 @@ impl Fixture {
             registry.bind(bind("zwp_text_input_manager_v3"), 1, &qh, ());
         let ime_manager: imm::ZwpInputMethodManagerV2 =
             registry.bind(bind("zwp_input_method_manager_v2"), 1, &qh, ());
+        let lock_manager = registry.bind(bind("ext_session_lock_manager_v1"), 1, &qh, ());
+        let output = registry.bind(bind("wl_output"), 4, &qh, ());
         let input = manager.get_text_input(&seat, &qh, ());
         let ime = ime_manager.get_input_method(&seat, &qh, ());
         let surface = compositor.create_surface(&qh, ());
@@ -287,6 +404,8 @@ impl Fixture {
             state,
             queue,
             compositor,
+            lock_manager,
+            output,
             seat,
             manager,
             ime_manager,
@@ -681,5 +800,29 @@ fn ime_started_during_secure_input_waits_until_resume() {
             .text
             .iter()
             .any(|(_, event)| matches!(event, ti::Event::Enter { .. }))
+    );
+}
+
+#[test]
+fn rejected_lock_surface_requests_remain_inert_without_crashing_or_reserving_outputs() {
+    let mut f = Fixture::new();
+    let owner = f.lock_manager.lock(&f.queue.handle(), ());
+    let rejected = f.lock_manager.lock(&f.queue.handle(), ());
+    let surface = f.compositor.create_surface(&f.queue.handle(), ());
+    // Pipeline creation before receiving the second lock's finished event.
+    let inert = rejected.get_lock_surface(&surface, &f.output, &f.queue.handle(), ());
+    f.sync();
+    assert_eq!(f.state.lock_finished, 1);
+    assert_eq!(f.state.lock_configures, 0);
+    rejected.destroy();
+    inert.ack_configure(123); // inert objects must tolerate queued requests too
+    inert.destroy();
+    f.sync();
+    let actual_surface = f.compositor.create_surface(&f.queue.handle(), ());
+    let _actual = owner.get_lock_surface(&actual_surface, &f.output, &f.queue.handle(), ());
+    f.sync();
+    assert_eq!(
+        f.state.lock_configures, 1,
+        "rejected lock reserved the output"
     );
 }

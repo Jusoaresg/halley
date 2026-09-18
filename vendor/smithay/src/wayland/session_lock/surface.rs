@@ -8,7 +8,9 @@ use crate::wayland::compositor::{self, BufferAssignment, Cacheable, SurfaceAttri
 use crate::wayland::viewporter::{ViewportCachedState, ViewporterSurfaceState};
 use _session_lock::ext_session_lock_surface_v1::{Error, ExtSessionLockSurfaceV1, Request};
 use tracing::trace_span;
-use wayland_protocols::ext::session_lock::v1::server::{self as _session_lock, ext_session_lock_surface_v1};
+use wayland_protocols::ext::session_lock::v1::server::{
+    self as _session_lock, ext_session_lock_surface_v1,
+};
 use wayland_server::protocol::wl_surface::WlSurface;
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource, Weak};
 
@@ -20,7 +22,7 @@ pub struct ExtLockSurfaceUserData {
     // `LockSurfaceAttributes` stored in the surface `data_map` contains a
     // `ExtSessionLockSurfaceV1`. So this reference needs to be weak to avoid a
     // cycle.
-    pub(crate) surface: Weak<WlSurface>,
+    pub(crate) surface: Option<Weak<WlSurface>>,
 }
 
 impl<D> Dispatch<ExtSessionLockSurfaceV1, ExtLockSurfaceUserData, D> for SessionLockManagerState
@@ -40,7 +42,11 @@ where
     ) {
         match request {
             Request::AckConfigure { serial } => {
-                let Ok(surface) = data.surface.upgrade() else {
+                let Some(surface) = data
+                    .surface
+                    .as_ref()
+                    .and_then(|surface| surface.upgrade().ok())
+                else {
                     return;
                 };
 
@@ -70,7 +76,11 @@ where
         _resource: &ExtSessionLockSurfaceV1,
         data: &ExtLockSurfaceUserData,
     ) {
-        if let Ok(surface) = data.surface.upgrade() {
+        if let Some(surface) = data
+            .surface
+            .as_ref()
+            .and_then(|surface| surface.upgrade().ok())
+        {
             compositor::with_states(&surface, |states| {
                 let mut attributes = states
                     .data_map
@@ -188,7 +198,10 @@ impl LockSurface {
     }
 
     /// Get the current pending configure state.
-    pub fn get_pending_state(&self, attributes: &mut LockSurfaceAttributes) -> Option<LockSurfaceState> {
+    pub fn get_pending_state(
+        &self,
+        attributes: &mut LockSurfaceAttributes,
+    ) -> Option<LockSurfaceState> {
         let server_pending = attributes.server_pending.take()?;
 
         // Check if last state matches pending state.
@@ -244,8 +257,12 @@ impl LockSurface {
 
             // Ensure pending state is initialized.
             if attributes.server_pending.is_none() {
-                attributes.server_pending =
-                    Some(attributes.current_server_state().cloned().unwrap_or_default());
+                attributes.server_pending = Some(
+                    attributes
+                        .current_server_state()
+                        .cloned()
+                        .unwrap_or_default(),
+                );
             }
 
             let server_pending = attributes.server_pending.as_mut().unwrap();
@@ -278,11 +295,21 @@ impl LockSurface {
     ///
     /// This should be called when the underlying WlSurface
     /// handles a wl_surface.commit request.
-    pub(crate) fn pre_commit_hook<D: 'static>(_state: &mut D, _dh: &DisplayHandle, surface: &WlSurface) {
-        let _span = trace_span!("session-lock-surface pre-commit", surface = %surface.id()).entered();
+    pub(crate) fn pre_commit_hook<D: 'static>(
+        _state: &mut D,
+        _dh: &DisplayHandle,
+        surface: &WlSurface,
+    ) {
+        let _span =
+            trace_span!("session-lock-surface pre-commit", surface = %surface.id()).entered();
 
         compositor::with_states(surface, |states| {
-            let role = states.data_map.get::<LockSurfaceData>().unwrap().lock().unwrap();
+            let role = states
+                .data_map
+                .get::<LockSurfaceData>()
+                .unwrap()
+                .lock()
+                .unwrap();
 
             let Some(last_acked) = role.last_acked else {
                 role.surface.post_error(

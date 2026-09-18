@@ -63,8 +63,8 @@ mod surface;
 
 pub use lock::SessionLockState;
 pub use surface::{
-    ExtLockSurfaceUserData, LockSurface, LockSurfaceAttributes, LockSurfaceCachedState, LockSurfaceConfigure,
-    LockSurfaceData, LockSurfaceState,
+    ExtLockSurfaceUserData, LockSurface, LockSurfaceAttributes, LockSurfaceCachedState,
+    LockSurfaceConfigure, LockSurfaceData, LockSurfaceState,
 };
 
 const MANAGER_VERSION: u32 = 1;
@@ -76,6 +76,32 @@ pub struct SessionLockManagerState {
 }
 
 impl SessionLockManagerState {
+    /// Drain requests already in flight for a rejected lock. New surface IDs must
+    /// be initialized even though they will never acquire a role or be displayed.
+    /// Inert surfaces cannot configure, reserve outputs, or affect the real lock.
+    pub fn rejected_request<D>(
+        lock: &ExtSessionLockV1,
+        request: wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1::Request,
+        data_init: &mut DataInit<'_, D>,
+    ) where
+        D: Dispatch<wayland_protocols::ext::session_lock::v1::server::ext_session_lock_surface_v1::ExtSessionLockSurfaceV1, ExtLockSurfaceUserData> + 'static,
+    {
+        use wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1::{
+            Error, Request,
+        };
+        use wayland_server::Resource;
+        match request {
+            Request::GetLockSurface { id, .. } => {
+                data_init.init(id, ExtLockSurfaceUserData { surface: None });
+            }
+            Request::UnlockAndDestroy => {
+                lock.post_error(Error::InvalidUnlock, "This lock request was not accepted.")
+            }
+            Request::Destroy => {}
+            _ => unreachable!(),
+        }
+    }
+
     /// Create new [`ExtSessionLockManagerV1`] global.
     pub fn new<D, F>(display: &DisplayHandle, filter: F) -> Self
     where
@@ -104,7 +130,8 @@ pub struct SessionLockManagerGlobalData {
     filter: Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
 }
 
-impl<D> GlobalDispatch<ExtSessionLockManagerV1, SessionLockManagerGlobalData, D> for SessionLockManagerState
+impl<D> GlobalDispatch<ExtSessionLockManagerV1, SessionLockManagerGlobalData, D>
+    for SessionLockManagerState
 where
     D: GlobalDispatch<ExtSessionLockManagerV1, SessionLockManagerGlobalData>,
     D: Dispatch<ExtSessionLockManagerV1, ()>,

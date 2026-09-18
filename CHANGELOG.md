@@ -74,6 +74,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Safely drain surface-creation requests on rejected session locks, including
+  requests pipelined before rejection reaches the client. Rejected lock surfaces
+  remain inert and cannot reserve outputs, replace the real lock, or crash the
+  compositor through uninitialized protocol objects.
 - Isolate lock-screen input from ordinary clients: suspend IME keyboard grabs
   and text state until unlock, retire existing client grabs, and reject popup,
   XWayland, and virtual-keyboard input paths while locked. Existing IMEs resume

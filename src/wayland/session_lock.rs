@@ -423,12 +423,7 @@ impl<D: SessionDriver> Dispatch<ExtSessionLockV1, SessionLockState> for Session<
         data_init: &mut DataInit<'_, Self>,
     ) {
         if state.session_lock.rejected_locks.contains(&lock.id()) {
-            if matches!(request, SessionLockRequest::UnlockAndDestroy) {
-                lock.post_error(
-                    SessionLockError::InvalidUnlock,
-                    "This lock request was not accepted.",
-                );
-            }
+            SessionLockManagerState::rejected_request(lock, request, data_init);
             return;
         }
         if matches!(request, SessionLockRequest::UnlockAndDestroy)

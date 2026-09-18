@@ -10,7 +10,9 @@ use _session_lock::ext_session_lock_v1::{Error, ExtSessionLockV1, Request};
 use wayland_protocols::ext::session_lock::v1::server::{self as _session_lock};
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
-use crate::wayland::session_lock::surface::{ExtLockSurfaceUserData, LockSurface, LockSurfaceAttributes};
+use crate::wayland::session_lock::surface::{
+    ExtLockSurfaceUserData, LockSurface, LockSurfaceAttributes,
+};
 use crate::wayland::session_lock::{SessionLockHandler, SessionLockManagerState};
 
 /// Surface role for ext-session-lock surfaces.
@@ -47,7 +49,11 @@ where
         data_init: &mut DataInit<'_, D>,
     ) {
         match request {
-            Request::GetLockSurface { id, surface, output } => {
+            Request::GetLockSurface {
+                id,
+                surface,
+                output,
+            } => {
                 // Assign surface a role and ensure it never had one before.
                 if compositor::give_role(&surface, LOCK_SURFACE_ROLE).is_err() {
                     lock.post_error(Error::Role, "Surface already has a role.");
@@ -66,8 +72,10 @@ where
                 let has_buffer = compositor::with_states(&surface, |states| {
                     let cached = &states.cached_state;
                     let mut guard = cached.get::<SurfaceAttributes>();
-                    let pending = matches!(guard.pending().buffer, Some(BufferAssignment::NewBuffer(_)));
-                    let current = matches!(guard.current().buffer, Some(BufferAssignment::NewBuffer(_)));
+                    let pending =
+                        matches!(guard.pending().buffer, Some(BufferAssignment::NewBuffer(_)));
+                    let current =
+                        matches!(guard.current().buffer, Some(BufferAssignment::NewBuffer(_)));
                     pending || current
                 });
                 if has_buffer {
@@ -76,7 +84,7 @@ where
                 }
 
                 let data = ExtLockSurfaceUserData {
-                    surface: surface.downgrade(),
+                    surface: Some(surface.downgrade()),
                 };
                 let lock_surface = data_init.init(id, data);
 
@@ -119,7 +127,10 @@ where
             Request::Destroy => {
                 // Ensure session is not locked.
                 if data.lock_status.load(Ordering::Relaxed) {
-                    lock.post_error(Error::InvalidDestroy, "Cannot destroy session lock while locked.");
+                    lock.post_error(
+                        Error::InvalidDestroy,
+                        "Cannot destroy session lock while locked.",
+                    );
                 }
             }
             _ => unreachable!(),
