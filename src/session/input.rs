@@ -3711,9 +3711,6 @@ where
             ) {
                 super::closing::start_steam_client_close_control(session, &window);
             }
-            if state == ButtonState::Released {
-                session.xwayland.finish_popup_pointer();
-            }
             pointer_handle.button(
                 session,
                 &ButtonEvent {

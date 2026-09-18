@@ -34,14 +34,6 @@ impl<D: SessionDriver> State<D> {
     ) {
     }
 
-    pub fn popup_pointer_motion(&self, _: &Window, _: (f64, f64)) -> bool {
-        false
-    }
-    pub fn popup_pointer_active(&self) -> bool {
-        false
-    }
-    pub fn finish_popup_pointer(&self) {}
-
     pub fn display_name(&self) -> Option<OsString> {
         None
     }

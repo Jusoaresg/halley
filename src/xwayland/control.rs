@@ -10,7 +10,6 @@ use x11rb::protocol::xproto::{
     AtomEnum, AutoRepeatMode, ChangeKeyboardControlAux, ConnectionExt as _, CreateWindowAux,
     GetGeometryReply, InputFocus, PropMode, Window, WindowClass,
 };
-use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::{COPY_FROM_PARENT, CURRENT_TIME, NONE};
@@ -95,8 +94,6 @@ pub struct X11Control {
     root: Window,
     focus_sink: Window,
     active_window: Cell<Option<Window>>,
-    root_pointer_available: bool,
-    root_pointer_drag: Cell<Option<Window>>,
     desktop_geometry: Cell<Option<PublishedDesktopGeometry>>,
     frame_extents: RefCell<HashMap<Window, (i32, i32, i32, i32)>>,
 }
@@ -128,86 +125,15 @@ impl X11Control {
         publish_ewmh(&connection, root, support_window, root_geometry, &atoms)?;
         connection.flush()?;
 
-        // EI redirects XTEST back to a compositor. Never use this delivery
-        // path when such a backend is configured; Halley does not enable the
-        // optional Xwayland EI portal either.
-        let root_pointer_available = std::env::var_os("LIBEI_SOCKET").is_none()
-            && connection
-                .xtest_get_version(2, 2)
-                .ok()
-                .and_then(|cookie| cookie.reply().ok())
-                .is_some();
         Ok(Self {
             connection,
             atoms,
             root,
             focus_sink,
             active_window: Cell::new(None),
-            root_pointer_available,
-            root_pointer_drag: Cell::new(None),
             desktop_geometry: Cell::new(None),
             frame_extents: RefCell::new(HashMap::new()),
         })
-    }
-
-    /// Deliver pointer motion in the X server's root coordinate system.
-    /// XTEST constructs root/local event coordinates together, so a client
-    /// moving its own window cannot invalidate a Wayland-local motion sample.
-    pub fn popup_pointer_motion(&self, window: Window, position: (f64, f64)) -> bool {
-        let Some((x, y)) = root_pointer_coordinates(position) else {
-            return false;
-        };
-        if !self.root_pointer_available {
-            return false;
-        }
-        if self.root_pointer_drag.get() != Some(window) {
-            // The button travels over Wayland; don't overtake its press on
-            // this independent X11 connection. Retry on the next motion if
-            // Xwayland has not processed the press yet.
-            let Ok(cookie) = self.connection.query_pointer(self.root) else {
-                return false;
-            };
-            let Ok(pointer) = cookie.reply() else {
-                return false;
-            };
-            if !pointer
-                .mask
-                .contains(x11rb::protocol::xproto::KeyButMask::BUTTON1)
-            {
-                return false;
-            }
-        }
-        let Ok(cookie) = self.connection.xtest_fake_input(
-            x11rb::protocol::xproto::MOTION_NOTIFY_EVENT,
-            0,
-            CURRENT_TIME,
-            self.root,
-            x,
-            y,
-            0,
-        ) else {
-            return false;
-        };
-        cookie.ignore_error();
-        if self.connection.flush().is_err() {
-            return false;
-        }
-        self.root_pointer_drag.set(Some(window));
-        true
-    }
-
-    pub fn popup_pointer_active(&self) -> bool {
-        self.root_pointer_drag.get().is_some()
-    }
-
-    /// Ensure the last X11 motion has been processed before a Wayland button
-    /// release is sent. Only a drag handoff pays for this round trip.
-    pub fn finish_popup_pointer(&self) {
-        if self.root_pointer_drag.take().is_some() {
-            if let Ok(cookie) = self.connection.get_input_focus() {
-                let _ = cookie.reply();
-            }
-        }
     }
 
     /// Publishes the decoration Halley draws around a client window.
@@ -671,201 +597,5 @@ mod tests {
         assert_eq!(active_window_property_value(None, true, 41), 41);
         assert_eq!(active_window_property_value(None, false, 41), 0);
         assert_eq!(active_window_property_value(Some(73), true, 41), 73);
-    }
-}
-
-/// Core XTEST coordinates are signed 16-bit root-screen pixels. Falling back
-/// is preferable to wrapping a large desktop coordinate onto another output.
-fn root_pointer_coordinates((x, y): (f64, f64)) -> Option<(i16, i16)> {
-    if !x.is_finite() || !y.is_finite() {
-        return None;
-    }
-    let (x, y) = (x.round(), y.round());
-    if x < i16::MIN as f64 || x > i16::MAX as f64 || y < i16::MIN as f64 || y > i16::MAX as f64 {
-        return None;
-    }
-    Some((x as i16, y as i16))
-}
-
-#[cfg(test)]
-mod popup_pointer_tests {
-    use super::*;
-
-    #[test]
-    fn root_pointer_coordinates_do_not_wrap_or_accept_nonfinite_values() {
-        assert_eq!(
-            root_pointer_coordinates((1972.503, 1190.397)),
-            Some((1973, 1190))
-        );
-        for point in [
-            (f64::NAN, 0.0),
-            (0.0, f64::INFINITY),
-            (32768.0, 0.0),
-            (-32769.0, 0.0),
-        ] {
-            assert_eq!(root_pointer_coordinates(point), None);
-        }
-    }
-
-    #[test]
-    #[ignore = "requires HALLEY_TEST_XVFB pointing to Xvfb; uses an isolated X server"]
-    fn moving_popout_delivers_root_coordinates_without_origin_feedback() {
-        use std::io::BufRead;
-        use std::process::{Command, Stdio};
-        use x11rb::protocol::xproto::{ConfigureWindowAux, EventMask, KeyButMask};
-        struct Server(std::process::Child);
-        impl Drop for Server {
-            fn drop(&mut self) {
-                let _ = self.0.kill();
-                let _ = self.0.wait();
-            }
-        }
-        let executable = std::env::var_os("HALLEY_TEST_XVFB").expect("set HALLEY_TEST_XVFB");
-        let mut server = Server(
-            Command::new(executable)
-                .args([
-                    "-displayfd",
-                    "1",
-                    "-screen",
-                    "0",
-                    "4096x3072x24",
-                    "-nolisten",
-                    "tcp",
-                    "-noreset",
-                ])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap(),
-        );
-        let mut display = String::new();
-        std::io::BufReader::new(server.0.stdout.take().unwrap())
-            .read_line(&mut display)
-            .unwrap();
-        let number: u32 = display.trim().parse().unwrap();
-        let (app, _) = RustConnection::connect(Some(&format!(":{number}"))).unwrap();
-        let atoms = Atoms::new(&app).unwrap().reply().unwrap();
-        let root = app.setup().roots[0].root;
-        app.set_selection_owner(root, atoms.WM_S0, CURRENT_TIME)
-            .unwrap()
-            .check()
-            .unwrap();
-        app.change_property32(
-            PropMode::REPLACE,
-            root,
-            atoms._NET_SUPPORTING_WM_CHECK,
-            AtomEnum::WINDOW,
-            &[root],
-        )
-        .unwrap()
-        .check()
-        .unwrap();
-        let control = X11Control::connect(number).unwrap();
-        let window = app.generate_id().unwrap();
-        app.create_window(
-            COPY_FROM_PARENT as u8,
-            window,
-            control.root,
-            1283,
-            -730,
-            772,
-            2849,
-            0,
-            WindowClass::INPUT_OUTPUT,
-            COPY_FROM_PARENT,
-            &CreateWindowAux::new().override_redirect(1).event_mask(
-                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION,
-            ),
-        )
-        .unwrap()
-        .check()
-        .unwrap();
-        app.map_window(window).unwrap().check().unwrap();
-        // Without a processed left-button press, keep the Wayland path.
-        assert!(!control.popup_pointer_motion(window, (1677.0, 711.0)));
-        control
-            .connection
-            .xtest_fake_input(
-                x11rb::protocol::xproto::MOTION_NOTIFY_EVENT,
-                0,
-                0,
-                control.root,
-                1677,
-                711,
-                0,
-            )
-            .unwrap()
-            .check()
-            .unwrap();
-        control
-            .connection
-            .xtest_fake_input(
-                x11rb::protocol::xproto::BUTTON_PRESS_EVENT,
-                1,
-                0,
-                control.root,
-                0,
-                0,
-                0,
-            )
-            .unwrap()
-            .check()
-            .unwrap();
-        assert!(
-            app.query_pointer(window)
-                .unwrap()
-                .reply()
-                .unwrap()
-                .mask
-                .contains(KeyButMask::BUTTON1)
-        );
-        while app.poll_for_event().unwrap().is_some() {}
-        // Replay the captured origin change, then additional moving origins.
-        for (index, (x, y)) in [(3068, -293), (1995, -53), (2500, -365)]
-            .into_iter()
-            .enumerate()
-        {
-            app.configure_window(window, &ConfigureWindowAux::new().x(x).y(y))
-                .unwrap()
-                .check()
-                .unwrap();
-            let expected_x = 1973 + index as i16;
-            assert!(control.popup_pointer_motion(window, (f64::from(expected_x), 1190.0)));
-            // The release barrier processes motion before the next input stream.
-            control.finish_popup_pointer();
-            let pointer = app.query_pointer(window).unwrap().reply().unwrap();
-            assert_eq!((pointer.root_x, pointer.root_y), (expected_x, 1190));
-            assert_eq!(i32::from(pointer.win_x) + x, i32::from(expected_x));
-            assert_eq!(i32::from(pointer.win_y) + y, 1190);
-            let mut saw_motion = false;
-            while let Some(event) = app.poll_for_event().unwrap() {
-                if let x11rb::protocol::Event::MotionNotify(event) = event {
-                    saw_motion = true;
-                    assert_eq!(event.event, window);
-                    assert_eq!((event.root_x, event.root_y), (expected_x, 1190));
-                    assert_eq!(i32::from(event.event_x) + x, i32::from(expected_x));
-                }
-            }
-            assert!(
-                saw_motion,
-                "held grab must receive the root-coordinate motion"
-            );
-        }
-        control
-            .connection
-            .xtest_fake_input(
-                x11rb::protocol::xproto::BUTTON_RELEASE_EVENT,
-                1,
-                0,
-                control.root,
-                0,
-                0,
-                0,
-            )
-            .unwrap()
-            .check()
-            .unwrap();
-        assert!(!control.popup_pointer_motion(window, (1973.0, 1190.0)));
-        assert!(!control.popup_pointer_active());
     }
 }

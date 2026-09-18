@@ -73,10 +73,6 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
-- Deliver ordinary left-button drags of standalone X11 normal/utility pop-outs
-  in X11 root coordinates, avoiding the moving-window origin race that made
-  ChatGPT voice pop-outs fling around. Synchronize motion before button release;
-  attached popups, native clients, and modifier drags keep their existing paths.
 - Bound IPC connections and request deadlines, release disconnected subscribers
   and capture buffers, and enforce per-connection/global DMA-BUF quotas and
   ownership. Close received descriptors even when ancillary data is truncated.
