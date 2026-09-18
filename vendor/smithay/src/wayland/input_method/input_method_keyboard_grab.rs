@@ -100,7 +100,8 @@ impl<D: SeatHandler> fmt::Debug for InputMethodKeyboardUserData<D> {
     }
 }
 
-impl<D: SeatHandler + 'static> Dispatch<ZwpInputMethodKeyboardGrabV2, InputMethodKeyboardUserData<D>, D>
+impl<D: SeatHandler + 'static>
+    Dispatch<ZwpInputMethodKeyboardGrabV2, InputMethodKeyboardUserData<D>, D>
     for InputMethodManagerState
 {
     fn destroyed(
@@ -109,8 +110,10 @@ impl<D: SeatHandler + 'static> Dispatch<ZwpInputMethodKeyboardGrabV2, InputMetho
         _object: &ZwpInputMethodKeyboardGrabV2,
         data: &InputMethodKeyboardUserData<D>,
     ) {
-        data.handle.inner.lock().unwrap().grab = None;
-        data.keyboard_handle.unset_grab(state);
+        let owned_grab = data.handle.inner.lock().unwrap().grab.take().is_some();
+        if owned_grab {
+            data.keyboard_handle.unset_grab(state);
+        }
     }
 
     fn request(

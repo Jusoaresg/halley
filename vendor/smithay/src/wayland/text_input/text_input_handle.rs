@@ -69,8 +69,13 @@ pub struct TextInputHandle {
 }
 
 impl TextInputHandle {
-    pub(super) fn add_instance(&self, instance: &ZwpTextInputV3) {
+    pub(super) fn add_instance(&self, instance: &ZwpTextInputV3, entered: bool) {
         let mut inner = self.inner.lock().unwrap();
+        if let Some(surface) = inner.focus.as_ref().filter(|surface| surface.is_alive()) {
+            if entered && instance.id().same_client_as(&surface.id()) {
+                instance.enter(surface);
+            }
+        }
         inner.instances.push(Instance {
             instance: instance.clone(),
             serial: 0,
@@ -87,7 +92,7 @@ impl TextInputHandle {
             .iter_mut()
             .find(|instance| instance.instance == *text_input)
         {
-            instance.serial += 1
+            instance.serial = instance.serial.wrapping_add(1)
         }
     }
 
@@ -109,6 +114,9 @@ impl TextInputHandle {
         let mut inner = self.inner.lock().unwrap();
         // Leaving clears the active text input.
         inner.active_text_input_id = None;
+        for instance in &mut inner.instances {
+            instance.pending_state = TextInputState::default();
+        }
         // NOTE: we implement it in a symmetrical way with `enter`.
         inner.with_focused_client_all_text_inputs(|text_input, focus, _| {
             text_input.leave(focus);
@@ -126,19 +134,10 @@ impl TextInputHandle {
         });
     }
 
-    /// The `discard_state` is used when the input-method signaled that
-    /// the state should be discarded and wrong serial sent.
-    pub fn done(&self, discard_state: bool) {
+    /// Finish a batch using this text-input object's actual commit count.
+    pub fn done(&self) {
         let mut inner = self.inner.lock().unwrap();
-        inner.with_active_text_input(|text_input, _, serial| {
-            if discard_state {
-                debug!("discarding text-input state due to serial");
-                // Discarding is done by sending non-matching serial.
-                text_input.done(0);
-            } else {
-                text_input.done(serial);
-            }
-        });
+        inner.with_active_text_input(|text_input, _, serial| text_input.done(serial));
     }
 
     /// Access the text-input instances for the currently focused surface.
@@ -239,12 +238,22 @@ where
 
         match request {
             zwp_text_input_v3::Request::Enable => {
-                pending_state.enable = Some(true);
+                *pending_state = TextInputState {
+                    enable: Some(true),
+                    ..Default::default()
+                };
             }
             zwp_text_input_v3::Request::Disable => {
-                pending_state.enable = Some(false);
+                *pending_state = TextInputState {
+                    enable: Some(false),
+                    ..Default::default()
+                };
             }
-            zwp_text_input_v3::Request::SetSurroundingText { text, cursor, anchor } => {
+            zwp_text_input_v3::Request::SetSurroundingText {
+                text,
+                cursor,
+                anchor,
+            } => {
                 pending_state.surrounding_text = Some((text, cursor as u32, anchor as u32));
             }
             zwp_text_input_v3::Request::SetTextChangeCause { cause } => {
@@ -258,8 +267,14 @@ where
                 let purpose = purpose.into_result().unwrap_or(ContentPurpose::Normal);
                 pending_state.content_type = Some((hint, purpose));
             }
-            zwp_text_input_v3::Request::SetCursorRectangle { x, y, width, height } => {
-                pending_state.cursor_rectangle = Some(Rectangle::new((x, y).into(), (width, height).into()));
+            zwp_text_input_v3::Request::SetCursorRectangle {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                pending_state.cursor_rectangle =
+                    Some(Rectangle::new((x, y).into(), (width, height).into()));
             }
             zwp_text_input_v3::Request::Commit => {
                 let mut new_state = mem::take(pending_state);
@@ -276,7 +291,8 @@ where
                         *active_text_input_id = Some(resource.id());
                         // Drop the guard before calling to other subsystem.
                         drop(guard);
-                        data.input_method_handle.activate_input_method(state, &focus);
+                        data.input_method_handle
+                            .activate_input_method(state, &focus);
                     }
                     Some(false) => {
                         *active_text_input_id = None;
@@ -302,11 +318,13 @@ where
                     });
                 }
 
-                if let Some(cause) = new_state.text_change_cause.take() {
-                    data.input_method_handle.with_instance(move |input_method| {
-                        input_method.object.text_change_cause(cause);
-                    });
-                }
+                let cause = new_state
+                    .text_change_cause
+                    .take()
+                    .unwrap_or(ChangeCause::InputMethod);
+                data.input_method_handle.with_instance(move |input_method| {
+                    input_method.object.text_change_cause(cause);
+                });
 
                 if let Some((hint, purpose)) = new_state.content_type.take() {
                     data.input_method_handle.with_instance(move |input_method| {
@@ -330,24 +348,23 @@ where
         }
     }
 
-    fn destroyed(state: &mut D, _client: ClientId, text_input: &ZwpTextInputV3, data: &TextInputUserData) {
+    fn destroyed(
+        state: &mut D,
+        _client: ClientId,
+        text_input: &ZwpTextInputV3,
+        data: &TextInputUserData,
+    ) {
         let destroyed_id = text_input.id();
         let deactivate_im = {
             let mut inner = data.handle.inner.lock().unwrap();
-            inner.instances.retain(|inst| inst.instance.id() != destroyed_id);
-            let destroyed_focused = inner
-                .focus
-                .as_ref()
-                .map(|focus| focus.id().same_client_as(&destroyed_id))
-                .unwrap_or(true);
-
-            // Deactivate IM when we either lost focus entirely or destroyed text-input for the
-            // currently focused client.
-            destroyed_focused
-                && !inner
-                    .instances
-                    .iter()
-                    .any(|inst| inst.instance.id().same_client_as(&destroyed_id))
+            inner
+                .instances
+                .retain(|inst| inst.instance.id() != destroyed_id);
+            let active = inner.active_text_input_id.as_ref() == Some(&destroyed_id);
+            if active {
+                inner.active_text_input_id = None;
+            }
+            active
         };
 
         if deactivate_im {

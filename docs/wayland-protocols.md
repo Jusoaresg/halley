@@ -10,6 +10,17 @@ focus: a `WlSurface` enter/leave updates text-input automatically, IME
 candidate windows track the focused parent through the existing popup
 tree, and an IME keyboard grab is not replaced by an xdg-popup grab.
 X11 applications keep using X11 IME and do not participate in this pair.
+This is interface version 1 of the v3 protocol; the newer interface-version-2
+requests and events are not advertised.
+
+Halley's vendored Smithay buffers IME edits until commit, uses each text-input
+object's commit count for `done`, resets pending state on enable and focus loss,
+and rejects additional IMEs without disturbing the active one. Socket-level
+regressions in `tests/text_input_protocol.rs` exercise these transitions with
+real Wayland requests and events. Run them with
+`cargo test -p halley --test text_input_protocol`. These tests validate protocol
+handling; candidate-window rendering and toolkit integration still require a
+live IME session.
 
 Halley advertises `ext_background_effect_manager_v1` version 1 with the blur
 capability. A committed `set_blur_region` is clipped to the requesting

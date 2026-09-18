@@ -162,7 +162,8 @@ impl InputMethodManagerState {
     }
 }
 
-impl<D> GlobalDispatch<ZwpInputMethodManagerV2, InputMethodManagerGlobalData, D> for InputMethodManagerState
+impl<D> GlobalDispatch<ZwpInputMethodManagerV2, InputMethodManagerGlobalData, D>
+    for InputMethodManagerState
 where
     D: GlobalDispatch<ZwpInputMethodManagerV2, InputMethodManagerGlobalData>,
     D: Dispatch<ZwpInputMethodManagerV2, ()>,
@@ -211,9 +212,6 @@ where
                 user_data.insert_if_missing(InputMethodHandle::default);
                 let handle = user_data.get::<InputMethodHandle>().unwrap();
                 let text_input_handle = user_data.get::<TextInputHandle>().unwrap();
-                text_input_handle.with_focused_text_input(|ti, surface| {
-                    ti.enter(surface);
-                });
                 let keyboard_handle = seat.get_keyboard().unwrap();
                 let instance = data_init.init(
                     input_method,
@@ -227,7 +225,9 @@ where
                         dismiss_popup: D::dismiss_popup,
                     },
                 );
-                handle.add_instance(&instance);
+                if handle.add_instance(&instance) {
+                    text_input_handle.enter();
+                }
             }
             zwp_input_method_manager_v2::Request::Destroy => {
                 // Nothing to do

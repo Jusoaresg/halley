@@ -74,6 +74,12 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Correct text-input-v3 and input-method-v2 state handling: buffer composition
+  until the IME commits, report the application's actual commit count, and reset
+  pending state and caret geometry when switching text fields. Avoid duplicate
+  focus events, release destroyed active text-input objects, and reject competing
+  IMEs without disrupting the active one. Add socket-level protocol regressions
+  for composition, focus changes, object lifecycle, and IME reconnection.
 - Keep a field-maximized window (Firefox session restore) from snapping to
   its windowed size when `Mod+F` takes over. Compositor fullscreen no longer
   relocates or un-maximizes the client first, leftover Maximized no longer
