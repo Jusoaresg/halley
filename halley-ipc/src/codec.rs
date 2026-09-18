@@ -146,6 +146,62 @@ pub fn read_frame_with_fds(
     stream: &UnixStream,
     max_fds: usize,
 ) -> Result<(Vec<u8>, Vec<OwnedFd>), CodecError> {
+    read_frame_with_fds_until(stream, max_fds, None)
+}
+
+/// Read with an absolute deadline, including peers that slowly drip bytes.
+pub fn read_frame_with_fds_timeout(
+    stream: &UnixStream,
+    max_fds: usize,
+    timeout: std::time::Duration,
+) -> Result<(Vec<u8>, Vec<OwnedFd>), CodecError> {
+    let result =
+        read_frame_with_fds_until(stream, max_fds, Some(std::time::Instant::now() + timeout));
+    let _ = stream.set_read_timeout(None);
+    result
+}
+
+fn remaining_timeout(stream: &UnixStream, deadline: Option<std::time::Instant>) -> io::Result<()> {
+    if let Some(deadline) = deadline {
+        let remaining = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .filter(|duration| !duration.is_zero())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::TimedOut, "IPC frame deadline exceeded")
+            })?;
+        stream.set_read_timeout(Some(remaining))?;
+    }
+    Ok(())
+}
+
+fn read_exact_until(
+    mut stream: &UnixStream,
+    mut bytes: &mut [u8],
+    deadline: Option<std::time::Instant>,
+) -> io::Result<()> {
+    while !bytes.is_empty() {
+        remaining_timeout(stream, deadline)?;
+        match stream.read(bytes) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "IPC peer closed",
+                ));
+            }
+            Ok(count) => bytes = &mut bytes[count..],
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
+}
+
+fn read_frame_with_fds_until(
+    stream: &UnixStream,
+    max_fds: usize,
+    deadline: Option<std::time::Instant>,
+) -> Result<(Vec<u8>, Vec<OwnedFd>), CodecError> {
+    remaining_timeout(stream, deadline)?;
     let control_len = if max_fds == 0 {
         0
     } else {
@@ -180,9 +236,6 @@ pub fn read_frame_with_fds(
     if received == 0 {
         return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "IPC peer closed").into());
     }
-    if message.msg_flags & libc::MSG_CTRUNC != 0 {
-        return Err(io::Error::other("IPC descriptor message was truncated").into());
-    }
 
     let mut fds = Vec::new();
     unsafe {
@@ -200,6 +253,9 @@ pub fn read_frame_with_fds(
             header = libc::CMSG_NXTHDR(&message, header);
         }
     }
+    if message.msg_flags & libc::MSG_CTRUNC != 0 {
+        return Err(io::Error::other("IPC descriptor message was truncated").into());
+    }
     if fds.len() > max_fds {
         return Err(io::Error::other(format!(
             "IPC frame carried {} descriptors, maximum is {max_fds}",
@@ -210,8 +266,7 @@ pub fn read_frame_with_fds(
 
     let received = received as usize;
     if received < length.len() {
-        let mut stream = stream;
-        stream.read_exact(&mut length[received..])?;
+        read_exact_until(stream, &mut length[received..], deadline)?;
     }
     let length = u32::from_le_bytes(length) as usize;
     if length > MAX_FRAME_LEN {
@@ -219,8 +274,7 @@ pub fn read_frame_with_fds(
     }
 
     let mut bytes = vec![0u8; length];
-    let mut stream = stream;
-    stream.read_exact(&mut bytes)?;
+    read_exact_until(stream, &mut bytes, deadline)?;
     Ok((bytes, fds))
 }
 
@@ -451,5 +505,55 @@ mod tests {
         assert_eq!(bytes, b"buffer");
         assert_eq!(fds.len(), 1);
         assert_ne!(fds[0].as_raw_fd(), file.as_raw_fd());
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+    #[test]
+    fn incomplete_frames_time_out_even_when_bytes_keep_arriving() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client.write_all(&100u32.to_le_bytes()).unwrap();
+        let writer = std::thread::spawn(move || {
+            for _ in 0..20 {
+                if client.write_all(&[0]).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let start = Instant::now();
+        assert!(read_frame_with_fds_timeout(&server, 0, Duration::from_millis(60)).is_err());
+        assert!(start.elapsed() < Duration::from_secs(1));
+        drop(server);
+        writer.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod truncated_descriptor_tests {
+    use super::*;
+    #[test]
+    fn truncated_ancillary_messages_close_received_descriptors() {
+        let name =
+            std::ffi::CString::new(format!("halley-truncated-fds-{}", std::process::id())).unwrap();
+        let raw = unsafe { libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC) };
+        assert!(raw >= 0);
+        let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+        let count = || {
+            std::fs::read_dir("/proc/self/fd")
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter_map(|entry| std::fs::read_link(entry.path()).ok())
+                .filter(|path| path.to_string_lossy().contains(name.to_str().unwrap()))
+                .count()
+        };
+        assert_eq!(count(), 1);
+        let (server, client) = UnixStream::pair().unwrap();
+        write_frame_with_fds(&client, b"test", &[fd.as_raw_fd(); 8]).unwrap();
+        assert!(read_frame_with_fds(&server, 1).is_err());
+        assert_eq!(count(), 1, "received descriptors leaked on truncation");
     }
 }

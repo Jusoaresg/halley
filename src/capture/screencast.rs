@@ -16,15 +16,31 @@ use crate::session::{Session, SessionDriver};
 
 #[derive(Default)]
 pub struct ScreencastState {
-    buffers: HashMap<(String, u64), Dmabuf>,
+    buffers: HashMap<(u64, String, u64), Dmabuf>,
 }
 
 impl ScreencastState {
     pub fn register(
         &mut self,
+        client_id: u64,
         request: halley_ipc::RegisterDmabufRequest,
         fds: Vec<OwnedFd>,
     ) -> Result<(), String> {
+        let key = (client_id, request.stream_handle.clone(), request.buffer_id);
+        if request.stream_handle.len() > 256
+            || request.planes.len() > 4
+            || fds.len() > 4
+            || request.width > 16384
+            || request.height > 16384
+        {
+            return Err("DMA-BUF registration exceeds limits".into());
+        }
+        if !self.buffers.contains_key(&key)
+            && (self.buffers.len() >= 128
+                || self.buffers.keys().filter(|key| key.0 == client_id).count() >= 16)
+        {
+            return Err("DMA-BUF registration quota exceeded".into());
+        }
         if request.width <= 0 || request.height <= 0 || request.planes.is_empty() {
             return Err("invalid DMA-BUF dimensions or planes".to_string());
         }
@@ -49,13 +65,17 @@ impl ScreencastState {
         let dmabuf = builder
             .build()
             .ok_or_else(|| "could not build DMA-BUF".to_string())?;
-        self.buffers
-            .insert((request.stream_handle, request.buffer_id), dmabuf);
+        self.buffers.insert(key, dmabuf);
         Ok(())
     }
 
-    pub fn remove(&mut self, stream_handle: &str, buffer_id: u64) {
-        self.buffers.remove(&(stream_handle.to_string(), buffer_id));
+    pub fn disconnect(&mut self, client_id: u64) {
+        self.buffers.retain(|key, _| key.0 != client_id);
+    }
+
+    pub fn remove(&mut self, client_id: u64, stream_handle: &str, buffer_id: u64) {
+        self.buffers
+            .remove(&(client_id, stream_handle.to_string(), buffer_id));
     }
 }
 
@@ -75,6 +95,7 @@ pub enum CaptureFrameResult {
 
 pub fn capture_frame<D: SessionDriver>(
     session: &mut Session<D>,
+    client_id: u64,
     request: halley_ipc::CaptureFrameRequest,
     fds: Vec<OwnedFd>,
 ) -> Result<CaptureFrameResult, String> {
@@ -131,7 +152,7 @@ pub fn capture_frame<D: SessionDriver>(
             if !fds.is_empty() {
                 return Err("DMA-BUF frame request included descriptors".to_string());
             }
-            let key = (request.stream_handle.clone(), buffer_id);
+            let key = (client_id, request.stream_handle.clone(), buffer_id);
             let mut dmabuf = session
                 .screencast
                 .buffers
@@ -418,5 +439,57 @@ mod tests {
         blend_cursor_rgba(&mut frame, 2, 2, &cursor);
         assert_eq!(&frame[0..4], &[255, 0, 0, 255]);
         assert!(frame[4..].iter().all(|byte| *byte == 0));
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+    fn register(state: &mut ScreencastState, client: u64, id: u64) -> Result<(), String> {
+        state.register(
+            client,
+            halley_ipc::RegisterDmabufRequest {
+                stream_handle: "stream".into(),
+                buffer_id: id,
+                width: 1,
+                height: 1,
+                format: Fourcc::Xrgb8888 as u32,
+                modifier: 0,
+                flags: 0,
+                planes: vec![halley_ipc::DmabufPlane {
+                    fd_index: 0,
+                    plane_index: 0,
+                    offset: 0,
+                    stride: 4,
+                }],
+            },
+            vec![std::fs::File::open("/dev/null").unwrap().into()],
+        )
+    }
+    #[test]
+    fn buffers_are_owned_quota_limited_and_reclaimed_on_disconnect() {
+        let mut state = ScreencastState::default();
+        for id in 0..16 {
+            register(&mut state, 1, id).unwrap();
+        }
+        assert!(register(&mut state, 1, 16).is_err());
+        register(&mut state, 1, 0).unwrap(); // replacement consumes no extra slot
+        register(&mut state, 2, 0).unwrap();
+        state.remove(2, "stream", 1); // cannot remove client's 1 buffer
+        assert!(state.buffers.contains_key(&(1, "stream".into(), 1)));
+        state.disconnect(1);
+        assert_eq!(state.buffers.len(), 1);
+        assert!(state.buffers.contains_key(&(2, "stream".into(), 0)));
+        register(&mut state, 1, 16).unwrap();
+    }
+    #[test]
+    fn total_registration_count_is_bounded_across_clients() {
+        let mut state = ScreencastState::default();
+        for client in 0..128 {
+            register(&mut state, client, 0).unwrap();
+        }
+        assert!(register(&mut state, 129, 0).is_err());
+        state.disconnect(0);
+        register(&mut state, 129, 0).unwrap();
     }
 }

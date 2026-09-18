@@ -322,11 +322,16 @@ pub fn run(explicit_config_path: Option<std::path::PathBuf>) {
         eventline::warn!("xwayland: unavailable: {err}");
     }
 
-    if let Err(err) =
-        crate::ipc::init_ipc_listener(&event_loop.handle(), |app: &mut App, request| {
+    if let Err(err) = crate::ipc::init_ipc_listener(
+        &event_loop.handle(),
+        |app: &mut App, request| {
             crate::ipc::handle_request(app, request);
-        })
-    {
+        },
+        |app, client_id| {
+            app.screencast.disconnect(client_id);
+            app.api_subscriptions.disconnect(client_id);
+        },
+    ) {
         eventline::error!("ipc: failed to start listener: {err}");
     }
 

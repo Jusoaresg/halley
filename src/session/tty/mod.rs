@@ -546,11 +546,16 @@ pub fn run(explicit_config_path: Option<std::path::PathBuf>) {
         app.run_autostart_once();
     }
 
-    if let Err(err) =
-        crate::ipc::init_ipc_listener(&event_loop.handle(), |app: &mut TtyApp, request| {
+    if let Err(err) = crate::ipc::init_ipc_listener(
+        &event_loop.handle(),
+        |app: &mut TtyApp, request| {
             crate::ipc::handle_request(app, request);
-        })
-    {
+        },
+        |app, client_id| {
+            app.screencast.disconnect(client_id);
+            app.api_subscriptions.disconnect(client_id);
+        },
+    ) {
         eventline::error!("ipc: failed to start listener: {err}");
     }
 

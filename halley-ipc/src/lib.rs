@@ -11,7 +11,7 @@ use std::time::Duration;
 
 pub use codec::{
     CodecError, decode_request, decode_response, encode_request, encode_response, read_frame,
-    read_frame_with_fds, write_frame, write_frame_with_fds,
+    read_frame_with_fds, read_frame_with_fds_timeout, write_frame, write_frame_with_fds,
 };
 pub use types::{
     ApiEvent, BearingsRequest, BearingsStatusResponse, CaptureBuffer, CaptureCapabilities,

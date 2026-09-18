@@ -4,7 +4,9 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
 
 use calloop::channel::{Event, Sender, channel};
 use calloop::generic::Generic;
@@ -12,6 +14,70 @@ use calloop::{Interest, LoopHandle, Mode as CalloopMode, PostAction};
 use smithay::output::{Mode as OutputMode, Output};
 
 const MAX_REQUEST_FDS: usize = 32;
+const MAX_CLIENTS: usize = 64;
+const FRAME_TIMEOUT: Duration = Duration::from_secs(30);
+const REPLY_TIMEOUT: Duration = Duration::from_secs(300);
+
+#[derive(Default)]
+struct ConnectionLimit(Arc<AtomicUsize>);
+struct ConnectionSlot(Arc<AtomicUsize>);
+impl ConnectionLimit {
+    fn acquire(&self) -> Option<ConnectionSlot> {
+        self.0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < MAX_CLIENTS).then_some(count + 1)
+            })
+            .ok()
+            .map(|_| ConnectionSlot(self.0.clone()))
+    }
+}
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+enum ClientEvent {
+    Request(RequestEnvelope),
+    Closed(u64),
+}
+struct ClientLifetime {
+    id: u64,
+    events: Sender<ClientEvent>,
+    _slot: ConnectionSlot,
+}
+impl Drop for ClientLifetime {
+    fn drop(&mut self) {
+        let _ = self.events.send(ClientEvent::Closed(self.id));
+    }
+}
+
+fn peer_closed(stream: &UnixStream) -> bool {
+    let mut fd = libc::pollfd {
+        fd: stream.as_raw_fd(),
+        events: libc::POLLRDHUP,
+        revents: 0,
+    };
+    (unsafe { libc::poll(&mut fd, 1, 0) }) > 0
+        && fd.revents & (libc::POLLHUP | libc::POLLRDHUP | libc::POLLERR | libc::POLLNVAL) != 0
+}
+
+fn wait_reply<T>(
+    receiver: &mpsc::Receiver<T>,
+    stream: &UnixStream,
+    deadline: Option<Instant>,
+) -> Option<T> {
+    loop {
+        if peer_closed(stream) || deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return None;
+        }
+        match receiver.recv_timeout(Duration::from_secs(1)) {
+            Ok(reply) => return Some(reply),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return None,
+        }
+    }
+}
 
 /// Backend-agnostic access to real per-output info, mirroring `Renderable`'s
 /// existing shape (one small trait, implemented once per backend) rather
@@ -89,14 +155,26 @@ impl ReplySender {
 
 /// One request delivered on the compositor thread.
 pub struct RequestEnvelope {
+    pub client_id: u64,
     pub request: halley_ipc::Request,
     pub fds: Vec<OwnedFd>,
     pub reply: ReplySender,
 }
 
-fn client_worker(stream: UnixStream, requests: Sender<RequestEnvelope>) {
+fn client_worker(stream: UnixStream, lifetime: ClientLifetime) {
+    if stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .is_err()
+    {
+        return;
+    }
+    let requests = &lifetime.events;
     loop {
-        let (bytes, fds) = match halley_ipc::read_frame_with_fds(&stream, MAX_REQUEST_FDS) {
+        let (bytes, fds) = match halley_ipc::read_frame_with_fds_timeout(
+            &stream,
+            MAX_REQUEST_FDS,
+            FRAME_TIMEOUT,
+        ) {
             Ok(frame) => frame,
             Err(halley_ipc::CodecError::Io(err))
                 if matches!(
@@ -134,16 +212,18 @@ fn client_worker(stream: UnixStream, requests: Sender<RequestEnvelope>) {
 
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         if requests
-            .send(RequestEnvelope {
+            .send(ClientEvent::Request(RequestEnvelope {
+                client_id: lifetime.id,
                 request,
                 fds,
                 reply: ReplySender(reply_tx),
-            })
+            }))
             .is_err()
         {
             break;
         }
-        let Ok(reply) = reply_rx.recv() else {
+        let Some(reply) = wait_reply(&reply_rx, &stream, Some(Instant::now() + REPLY_TIMEOUT))
+        else {
             break;
         };
         let mut reply = reply;
@@ -153,7 +233,7 @@ fn client_worker(stream: UnixStream, requests: Sender<RequestEnvelope>) {
             break;
         }
         if let Some(event_stream) = event_stream {
-            for response in event_stream {
+            while let Some(response) = wait_reply(&event_stream, &stream, None) {
                 if write_response(
                     &stream,
                     ReplyFrame {
@@ -179,6 +259,7 @@ fn write_response(stream: &UnixStream, reply: ReplyFrame) -> Result<(), halley_i
 }
 
 struct ApiSubscriber {
+    client_id: u64,
     topics: HashSet<halley_ipc::EventTopic>,
     sender: mpsc::SyncSender<halley_ipc::Response>,
     sequence: u64,
@@ -191,14 +272,20 @@ pub struct ApiSubscriptions {
 }
 
 impl ApiSubscriptions {
+    pub fn disconnect(&mut self, client_id: u64) {
+        self.subscribers
+            .retain(|subscriber| subscriber.client_id != client_id);
+    }
     fn subscribe(
         &mut self,
+        client_id: u64,
         topics: Vec<halley_ipc::EventTopic>,
         snapshot: halley_ipc::StateSnapshot,
     ) -> mpsc::Receiver<halley_ipc::Response> {
         self.previous = Some(snapshot);
         let (sender, receiver) = mpsc::sync_channel(256);
         self.subscribers.push(ApiSubscriber {
+            client_id,
             topics: topics.into_iter().collect(),
             sender,
             sequence: 0,
@@ -450,6 +537,7 @@ fn remove_stale_socket(path: &Path) -> std::io::Result<()> {
 pub fn init_ipc_listener<App: 'static>(
     loop_handle: &LoopHandle<'_, App>,
     handler: impl Fn(&mut App, RequestEnvelope) + 'static,
+    disconnected: impl Fn(&mut App, u64) + 'static,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path = halley_ipc::ensure_runtime_dir()?.join("halley.sock");
     remove_stale_socket(&path)?;
@@ -458,22 +546,32 @@ pub fn init_ipc_listener<App: 'static>(
     listener.set_nonblocking(true)?;
 
     let (request_tx, request_rx) = channel();
-    loop_handle.insert_source(request_rx, move |event, _, app| {
-        if let Event::Msg(request) = event {
-            handler(app, request);
-        }
+    loop_handle.insert_source(request_rx, move |event, _, app| match event {
+        Event::Msg(ClientEvent::Request(request)) => handler(app, request),
+        Event::Msg(ClientEvent::Closed(id)) => disconnected(app, id),
+        Event::Closed => {}
     })?;
 
+    let limit = ConnectionLimit::default();
     loop_handle.insert_source(
         Generic::new(listener, Interest::READ, CalloopMode::Level),
         move |_, listener, _app| {
-            loop {
+            // Yield to rendering even during a connection flood.
+            for _ in 0..32 {
                 match listener.accept() {
                     Ok((stream, _addr)) => {
-                        let requests = request_tx.clone();
+                        let Some(slot) = limit.acquire() else {
+                            continue;
+                        };
+                        static NEXT_CLIENT: AtomicU64 = AtomicU64::new(1);
+                        let lifetime = ClientLifetime {
+                            id: NEXT_CLIENT.fetch_add(1, Ordering::Relaxed),
+                            events: request_tx.clone(),
+                            _slot: slot,
+                        };
                         if let Err(err) = std::thread::Builder::new()
                             .name("halley-ipc-client".to_string())
-                            .spawn(move || client_worker(stream, requests))
+                            .spawn(move || client_worker(stream, lifetime))
                         {
                             eventline::error!("ipc: failed to start client worker: {err}");
                         }
@@ -497,6 +595,7 @@ pub fn handle_request<D: crate::session::SessionDriver>(
     request: RequestEnvelope,
 ) {
     let RequestEnvelope {
+        client_id,
         request,
         fds,
         reply,
@@ -525,9 +624,11 @@ pub fn handle_request<D: crate::session::SessionDriver>(
         }
         publish_api_events(app);
         let snapshot = api_snapshot(app);
-        let stream = app
-            .api_subscriptions
-            .subscribe(subscription.topics.clone(), snapshot.clone());
+        let stream = app.api_subscriptions.subscribe(
+            client_id,
+            subscription.topics.clone(),
+            snapshot.clone(),
+        );
         let _ = reply.subscribe(snapshot, stream);
         return;
     }
@@ -561,7 +662,7 @@ pub fn handle_request<D: crate::session::SessionDriver>(
             }
         }
         halley_ipc::Request::RegisterDmabuf(request) => {
-            match app.screencast.register(request, fds) {
+            match app.screencast.register(client_id, request, fds) {
                 Ok(()) => halley_ipc::Response::Ack,
                 Err(message) => halley_ipc::Response::Error(message),
             }
@@ -570,11 +671,11 @@ pub fn handle_request<D: crate::session::SessionDriver>(
             stream_handle,
             buffer_id,
         } => {
-            app.screencast.remove(&stream_handle, buffer_id);
+            app.screencast.remove(client_id, &stream_handle, buffer_id);
             halley_ipc::Response::Ack
         }
         halley_ipc::Request::CaptureFrame(request) => {
-            match crate::capture::screencast::capture_frame(app, request, fds) {
+            match crate::capture::screencast::capture_frame(app, client_id, request, fds) {
                 Ok(crate::capture::screencast::CaptureFrameResult::Immediate(response)) => {
                     halley_ipc::Response::Frame(response)
                 }
@@ -988,5 +1089,58 @@ mod typed_error_tests {
             kind("cluster slot must be between 1 and 10, got 0"),
             halley_ipc::ServerErrorKind::InvalidRequest
         );
+    }
+}
+
+#[cfg(test)]
+mod resource_limit_tests {
+    use super::*;
+
+    #[test]
+    fn connection_slots_are_bounded_and_reclaimed() {
+        let limit = ConnectionLimit::default();
+        let mut slots: Vec<_> = (0..MAX_CLIENTS).map(|_| limit.acquire().unwrap()).collect();
+        assert!(limit.acquire().is_none());
+        slots.pop();
+        assert!(limit.acquire().is_some());
+        drop(slots);
+        assert_eq!(limit.0.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn disconnect_ends_a_deferred_reply_without_waiting_for_its_producer() {
+        let (server, client) = UnixStream::pair().unwrap();
+        let (_sender, receiver) = mpsc::channel::<()>();
+        drop(client);
+        assert!(wait_reply(&receiver, &server, None).is_none());
+    }
+
+    #[test]
+    fn worker_disconnect_emits_cleanup_and_releases_its_slot() {
+        let limit = ConnectionLimit::default();
+        let (events, receiver) = channel();
+        let mut event_loop = calloop::EventLoop::<Vec<u64>>::try_new().unwrap();
+        event_loop
+            .handle()
+            .insert_source(receiver, |event, _, closed| {
+                if let Event::Msg(ClientEvent::Closed(id)) = event {
+                    closed.push(id);
+                }
+            })
+            .unwrap();
+        let (server, client) = UnixStream::pair().unwrap();
+        drop(client);
+        client_worker(
+            server,
+            ClientLifetime {
+                id: 7,
+                events,
+                _slot: limit.acquire().unwrap(),
+            },
+        );
+        let mut closed = Vec::new();
+        event_loop.dispatch(Duration::ZERO, &mut closed).unwrap();
+        assert_eq!(closed, [7]);
+        assert_eq!(limit.0.load(Ordering::Acquire), 0);
     }
 }

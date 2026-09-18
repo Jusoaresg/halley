@@ -57,3 +57,19 @@ the portal's consent flow over unrestricted raw capture. The private same-user
 IPC socket remains a trusted desktop administration interface; do not expose
 it to untrusted sandboxes. This is not isolation from arbitrary unsandboxed
 programs that can execute code as your user or modify your session setup.
+
+## IPC resource limits
+
+The private compositor IPC admits at most 64 concurrent connections. Each
+request frame must arrive within 30 seconds (a slow byte stream does not extend
+that deadline); writes time out after 5 seconds, and deferred request replies
+expire after 5 minutes. Subscriptions may remain open while idle but are
+removed on disconnect. An idle ordinary connection expires after 30 seconds;
+clients must reconnect rather than reuse an expired connection.
+
+DMA-BUF registrations are scoped to the IPC connection: 16 buffers per
+connection and 128 total, at most four planes/descriptors per buffer. Closing
+the connection releases all its registrations. Capture and removal requests
+cannot access another connection's registered buffers, even if the stream name
+and buffer ID are identical. Persistent recording connections keep their own
+registrations while requesting frames.

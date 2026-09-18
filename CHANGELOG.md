@@ -73,6 +73,9 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Bound IPC connections and request deadlines, release disconnected subscribers
+  and capture buffers, and enforce per-connection/global DMA-BUF quotas and
+  ownership. Close received descriptors even when ancillary data is truncated.
 - Deny raw Wayland screen capture, clipboard data control, virtual keyboards,
   and input-method registration by default. Grant each capability separately
   to explicitly approved executable identities at connection admission.
