@@ -247,7 +247,7 @@ fn split_example_config_parses_end_to_end() {
             .any(|bind| bind.action == Action::PointerDragPan),
         "split example includes grabbed-window Field panning"
     );
-    assert_default_startup_workspaces(&runtime.autostart);
+    assert_field_first_autostart(&runtime.autostart);
     assert_eq!(
         runtime.decorations.titlebars.button_position,
         halley_config::TitlebarButtonPosition::Right
@@ -365,30 +365,48 @@ fn example_config_keeps_fps_overlay_disabled() {
     assert!(!runtime.debug.overlay_fps);
 }
 
-fn assert_default_startup_workspaces(autostart: &halley_config::Autostart) {
-    assert!(autostart.once.is_empty());
-    assert!(autostart.on_reload.is_empty());
-    assert_eq!(autostart.clusters.len(), 12);
-
-    for (index, cluster) in autostart.clusters.iter().enumerate() {
-        let number = index + 1;
-        assert_eq!(cluster.name, number.to_string());
-        assert!(cluster.members.is_empty());
-        assert_eq!(cluster.layout, None);
-        assert_eq!(
-            cluster.output.as_deref(),
-            Some(if number <= 6 { "DP-1" } else { "DP-2" })
-        );
-    }
+/// Milestone 1: a shipped example must teach the Field-first starting point.
+/// A fresh config declares no autostart commands and no startup clusters, so
+/// windows open directly onto the empty Field.
+fn assert_field_first_autostart(autostart: &halley_config::Autostart) {
+    assert!(
+        autostart.once.is_empty(),
+        "shipped examples must not launch session services automatically"
+    );
+    assert!(
+        autostart.on_reload.is_empty(),
+        "shipped examples must not run reload commands"
+    );
+    assert!(
+        autostart.clusters.is_empty(),
+        "shipped examples must not pre-create cluster workspaces: {:?}",
+        autostart.clusters
+    );
 }
 
 #[test]
-fn example_config_keeps_environment_and_application_autostart_inactive() {
+fn example_config_starts_field_first_without_autostart_or_clusters() {
     let config = RuneConfig::from_file(EXAMPLE_PATH).expect("example config parses");
     let runtime = halley_config::parse_runtime_config(&config).expect("runtime config parses");
 
     assert!(runtime.env.is_empty());
-    assert_default_startup_workspaces(&runtime.autostart);
+    assert_field_first_autostart(&runtime.autostart);
+}
+
+/// The commented startup-cluster example in the canonical template documents
+/// the optional syntax without activating it.
+#[test]
+fn example_config_keeps_only_a_commented_startup_cluster_example() {
+    let template = std::fs::read_to_string(EXAMPLE_PATH).expect("example config is readable");
+
+    assert!(
+        template.contains("  # cluster:\n  #   name \"Work\"\n  #   members []\n  # end"),
+        "the canonical template keeps one concise commented startup-cluster example"
+    );
+    assert!(
+        template.contains("docs/clusters.md"),
+        "the canonical template points at docs/clusters.md for complete syntax"
+    );
 }
 
 #[test]

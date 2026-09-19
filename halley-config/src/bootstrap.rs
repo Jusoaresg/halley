@@ -209,24 +209,80 @@ mod tests {
         assert!(DEFAULT_CONFIG.contains("Startup never\n# rewrites an existing config"));
     }
 
+    /// Milestone 1: fresh installations start on an empty Field. The shipped
+    /// template must declare no active startup clusters, so bootstrap never
+    /// pre-creates numbered workspace cores for a new user.
     #[test]
-    fn template_starts_with_six_empty_workspaces_per_sample_output() {
+    fn template_starts_field_first_without_startup_clusters() {
         let config = RuneConfig::from_str(DEFAULT_CONFIG).expect("bootstrap template parses");
         let autostart = crate::parse_autostart(&config).expect("bootstrap autostart parses");
 
-        assert!(autostart.once.is_empty());
-        assert!(autostart.on_reload.is_empty());
-        assert_eq!(autostart.clusters.len(), 12);
-        for (index, cluster) in autostart.clusters.iter().enumerate() {
-            let number = index + 1;
-            assert_eq!(cluster.name, number.to_string());
-            assert!(cluster.members.is_empty());
-            assert_eq!(cluster.layout, None);
-            assert_eq!(
-                cluster.output.as_deref(),
-                Some(if number <= 6 { "DP-1" } else { "DP-2" })
-            );
-        }
+        assert!(
+            autostart.once.is_empty(),
+            "a fresh config must not launch session services automatically"
+        );
+        assert!(
+            autostart.on_reload.is_empty(),
+            "a fresh config must not run reload commands"
+        );
+        assert!(
+            autostart.clusters.is_empty(),
+            "a fresh config must not pre-create cluster workspaces: {:?}",
+            autostart.clusters
+        );
+    }
+
+    /// Startup-cluster syntax is still documented in the template, but only as
+    /// an inert commented example that cannot create cores on its own.
+    #[test]
+    fn template_keeps_only_a_commented_startup_cluster_example() {
+        assert!(
+            DEFAULT_CONFIG.contains("  # cluster:\n  #   name \"Work\"\n  #   members []\n  # end"),
+            "the template keeps one concise commented startup-cluster example"
+        );
+        assert!(
+            DEFAULT_CONFIG.contains("docs/clusters.md"),
+            "the template points at docs/clusters.md for complete syntax"
+        );
+    }
+
+    /// Milestone 1 boundary: bootstrap never rewrites an existing config, even
+    /// when that config deliberately declares startup clusters.
+    #[test]
+    fn does_not_rewrite_existing_config_with_startup_clusters() {
+        const EXISTING: &str = concat!(
+            "keybinds:\n",
+            "  mod \"alt\"\n",
+            "end\n",
+            "\n",
+            "autostart:\n",
+            "  cluster:\n",
+            "    name \"Work\"\n",
+            "    members []\n",
+            "  end\n",
+            "end\n",
+        );
+
+        let scratch = ScratchDir::new("does_not_rewrite_existing_config_with_startup_clusters");
+        let config_file = scratch.path().join("halley").join("halley.rune");
+        fs::create_dir_all(config_file.parent().unwrap()).unwrap();
+        fs::write(&config_file, EXISTING).unwrap();
+
+        let wrote = bootstrap_default_config_at(&config_file).unwrap();
+
+        assert!(!wrote, "bootstrap must not write when a config exists");
+        assert_eq!(
+            fs::read_to_string(&config_file).unwrap(),
+            EXISTING,
+            "the existing config must remain byte-for-byte unchanged"
+        );
+
+        let config = RuneConfig::from_str(EXISTING).expect("existing config parses");
+        let autostart = crate::parse_autostart(&config).expect("existing autostart parses");
+        assert_eq!(autostart.clusters.len(), 1);
+        assert_eq!(autostart.clusters[0].name, "Work");
+        assert!(autostart.clusters[0].members.is_empty());
+        assert_eq!(autostart.clusters[0].output, None);
     }
 
     #[test]

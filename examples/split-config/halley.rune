@@ -13,70 +13,11 @@ autostart:
   # once "mako"
   # on-reload "notify-send 'Halley configuration reloaded'"
 
-  # Fresh configs start with six empty numbered workspaces on each of the two
-  # sample outputs. Replace DP-1/DP-2 with names from `halleyctl outputs`, and
-  # rename or remove these declarations to suit your setup. Empty members launch
-  # no applications; output only controls initial placement.
-  cluster:
-    name "1"
-    members []
-    output "DP-1"
-  end
-  cluster:
-    name "2"
-    members []
-    output "DP-1"
-  end
-  cluster:
-    name "3"
-    members []
-    output "DP-1"
-  end
-  cluster:
-    name "4"
-    members []
-    output "DP-1"
-  end
-  cluster:
-    name "5"
-    members []
-    output "DP-1"
-  end
-  cluster:
-    name "6"
-    members []
-    output "DP-1"
-  end
-  cluster:
-    name "7"
-    members []
-    output "DP-2"
-  end
-  cluster:
-    name "8"
-    members []
-    output "DP-2"
-  end
-  cluster:
-    name "9"
-    members []
-    output "DP-2"
-  end
-  cluster:
-    name "10"
-    members []
-    output "DP-2"
-  end
-  cluster:
-    name "11"
-    members []
-    output "DP-2"
-  end
-  cluster:
-    name "12"
-    members []
-    output "DP-2"
-  end
+  # Startup clusters are optional, and a fresh config declares none: windows you
+  # open begin on the empty Field. Add a `cluster` block here when you want an
+  # output to start with a named core. See docs/clusters.md for the complete
+  # syntax and launch attribution; the exhaustive template in
+  # examples/halley.rune shows a commented declaration you can copy.
 end
 
 keybinds:

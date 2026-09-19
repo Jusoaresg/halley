@@ -41,70 +41,17 @@ autostart:
 
   # on-reload "notify-send 'Halley configuration reloaded'"
 
-  # Fresh configs start with six empty numbered workspaces on each of the two
-  # sample outputs. Replace DP-1/DP-2 with names from `halleyctl outputs`, and
-  # rename or remove these declarations to suit your setup. Empty members launch
-  # no applications; output only controls initial placement.
-  cluster:
-    name "1"
-    members []
-    output "DP-1"
-  end
-  cluster:
-    name "2"
-    members []
-    output "DP-1"
-  end
-  cluster:
-    name "3"
-    members []
-    output "DP-1"
-  end
-  cluster:
-    name "4"
-    members []
-    output "DP-1"
-  end
-  cluster:
-    name "5"
-    members []
-    output "DP-1"
-  end
-  cluster:
-    name "6"
-    members []
-    output "DP-1"
-  end
-  cluster:
-    name "7"
-    members []
-    output "DP-2"
-  end
-  cluster:
-    name "8"
-    members []
-    output "DP-2"
-  end
-  cluster:
-    name "9"
-    members []
-    output "DP-2"
-  end
-  cluster:
-    name "10"
-    members []
-    output "DP-2"
-  end
-  cluster:
-    name "11"
-    members []
-    output "DP-2"
-  end
-  cluster:
-    name "12"
-    members []
-    output "DP-2"
-  end
+  # Fresh sessions start on an empty Field. No clusters are pre-created, so
+  # windows you open land directly on the Field instead of in a numbered
+  # workspace. Startup clusters are optional named contexts: declare one here
+  # when you want an output to begin with a named core. Empty `members []`
+  # launches no applications. See docs/clusters.md for the complete syntax,
+  # including optional `layout` and `output` selection and launch attribution.
+  #
+  # cluster:
+  #   name "Work"
+  #   members []
+  # end
 end
 
 # `view` groups settings by physical output. Repeat `output:` inside this one
