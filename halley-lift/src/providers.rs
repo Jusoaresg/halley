@@ -186,9 +186,11 @@ impl ProviderIndex {
             b.is_field_pinned
                 .cmp(&a.is_field_pinned)
                 .then_with(|| {
-                    empty_general
-                        .then(|| provider_rank(&a.kind).cmp(&provider_rank(&b.kind)))
-                        .unwrap_or(std::cmp::Ordering::Equal)
+                    if empty_general {
+                        provider_rank(&a.kind).cmp(&provider_rank(&b.kind))
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
                 })
                 .then_with(|| b.score.total_cmp(&a.score))
                 .then_with(|| a.section.cmp(&b.section))
