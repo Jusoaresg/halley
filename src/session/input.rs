@@ -70,6 +70,15 @@ fn drag_threshold_reached(press: Point<f64, Logical>, current: (f64, f64)) -> bo
     dx.hypot(dy) >= NODE_DRAG_THRESHOLD_PX
 }
 
+fn begin_cluster_core_direct_motion(
+    nodes: &mut crate::nodes::NodesState,
+    core: Option<halley_core::field::NodeId>,
+) {
+    if let Some(core) = core {
+        nodes.clear_direct_motion(core);
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingWindowMoveMotion {
     Wait,
@@ -2029,10 +2038,11 @@ where
                 .core_node(*id)
                 .is_none_or(|core| !crate::session::node_user_pinned(session, core))
         {
-            session.interactions.grab = crate::input::grab::Grab::MoveClusterCore {
-                id: *id,
-                screen_offset: *screen_offset,
-            };
+            let id = *id;
+            let screen_offset = *screen_offset;
+            begin_cluster_core_direct_motion(&mut session.nodes, session.clusters.core_node(id));
+            session.interactions.grab =
+                crate::input::grab::Grab::MoveClusterCore { id, screen_offset };
             session.cursor.set_override(
                 crate::cursor::OverrideSource::Grab,
                 Some(smithay::input::pointer::CursorIcon::Grabbing),
@@ -3265,6 +3275,10 @@ where
                     .core_node(id)
                     .is_none_or(|core| !crate::session::node_user_pinned(session, core))
                 {
+                    begin_cluster_core_direct_motion(
+                        &mut session.nodes,
+                        session.clusters.core_node(id),
+                    );
                     session.interactions.grab =
                         crate::input::grab::Grab::MoveClusterCore { id, screen_offset };
                     session.cursor.set_override(
@@ -3904,12 +3918,12 @@ mod tests {
     use super::keyboard::{ModalKeyRouting, modal_key_routing};
     use super::{BTN_LEFT, BTN_RIGHT, PendingWindowMoveMotion};
     use super::{
-        activation_shows_cluster_indicator, bloom_drag_handoff, collapsed_node_drop_origin,
-        drag_threshold_reached, forward_pointer_button, outside_lift_press_dismisses,
-        pending_window_move_motion, plain_background_press_dismisses_bloom,
-        pointer_move_falls_back_to_field_pan, preferred_cluster_navigation_focus,
-        releases_pending_window_move, sampled_drag_velocity, shortcut_policy_allows_bindings,
-        stacking_cycle_direction, typing_abandons_bloom,
+        activation_shows_cluster_indicator, begin_cluster_core_direct_motion, bloom_drag_handoff,
+        collapsed_node_drop_origin, drag_threshold_reached, forward_pointer_button,
+        outside_lift_press_dismisses, pending_window_move_motion,
+        plain_background_press_dismisses_bloom, pointer_move_falls_back_to_field_pan,
+        preferred_cluster_navigation_focus, releases_pending_window_move, sampled_drag_velocity,
+        shortcut_policy_allows_bindings, stacking_cycle_direction, typing_abandons_bloom,
     };
     // Model the real two-phase dispatch: consume pending state before interception,
     // then call the forwarding hook only for events delivered to the client.
@@ -4085,6 +4099,26 @@ mod tests {
 
         assert!(!drag_threshold_reached(press, (403.0, 254.0)));
         assert!(drag_threshold_reached(press, (408.0, 250.0)));
+    }
+
+    #[test]
+    fn cluster_core_drag_start_commits_its_zoom_displacement() {
+        let mut nodes = crate::nodes::NodesState::new(&halley_config::RuntimeConfig::default());
+        let core = nodes.field.spawn_surface(
+            "cluster-core",
+            Vec2 { x: 180.0, y: 120.0 },
+            Vec2 { x: 48.0, y: 48.0 },
+        );
+        assert!(
+            nodes
+                .field
+                .set_state(core, halley_core::field::NodeState::Core)
+        );
+        nodes.remember_zoom_home(core, Vec2 { x: 100.0, y: 120.0 });
+
+        begin_cluster_core_direct_motion(&mut nodes, Some(core));
+
+        assert_eq!(nodes.zoom_home(core), None);
     }
 
     #[test]
