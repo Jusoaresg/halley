@@ -303,6 +303,14 @@ available built-in terminal in this order:
 `terminator`, `mate-terminal`, `qterminal`, `lxterminal`, then `xterm`.
 To choose an exact terminal instead, bind its command directly—for example,
 `"$var.mod+t" "kitty"`.
+The default `$var.mod+d` binding launches `halley-lift`, Halley's bundled search
+and action launcher. Lift searches applications, running nodes, clusters,
+compositor actions, and config files in one field, and its `term` mode runs a
+terminal command line. Any other launcher works the same way, because a
+non-built-in action string is a command line: replace the binding with
+`"$var.mod+d" "fuzzel"` to use Fuzzel instead. Freshly generated configs ship
+the Lift binding and keep Fuzzel as a comment; existing configs keep their own
+launcher binding, and `halleyctl config migrate` never rewrites it.
 The interactive screenshot menu and its area, screen, and window selectors
 force the compositor cursor visible even if a client or inactivity policy had
 hidden it.

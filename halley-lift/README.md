@@ -14,6 +14,25 @@ You can also seed an initial query:
 halley-lift cluster release
 ```
 
+## Launching From Halley
+
+A freshly generated Halley config binds `Mod+D` to `halley-lift`, so Lift is the
+default front door for launching applications and for retrieving work that is
+already running. Halley launches it as an ordinary command line with the session
+environment, so no arguments or environment variables are required and the whole
+integration is one line in the `keybinds` section.
+
+Existing configurations are never rewritten, so a config that already binds
+another launcher keeps it. Switching either way is a one-line edit:
+
+```rune
+"$var.mod+d" "halley-lift"   # bundled launcher
+"$var.mod+d" "fuzzel"        # Fuzzel, or any other launcher command line
+```
+
+Halley owns that keybind and Lift owns its own window and appearance in
+`lift.rune`, so the two configurations stay independent.
+
 ## Search Prefixes
 
 Lift searches everything by default. Prefixing the query with a provider name filters results without changing the search text into a badge.

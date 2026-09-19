@@ -69,6 +69,10 @@ All notable changes to this project will be documented in this file.
   pre-creating numbered cluster workspaces. Explicit startup-cluster
   declarations remain supported, and existing user configurations are
   unchanged.
+- Make Halley Lift the default `Super+D` launcher in a freshly generated
+  configuration, and keep Fuzzel documented as the commented alternative.
+  Existing configurations are never rewritten, so users who already bind
+  Fuzzel or any other launcher keep their binding.
 - Keep clusters and their core identity after the final member closes so named
   empty workspaces remain available for later windows.
 - Add `decorations.titlebars.text-size` so window-title text can use a size

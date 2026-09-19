@@ -130,7 +130,7 @@ unchanged Field.
 | **Trail** | Per-output recent-focus navigation and remote inspection |
 | **Bearings** | Directional overlays and offscreen navigation |
 | **Apogee** | Multi-monitor overview and live previews |
-| **Lift** | Bundled search and action launcher |
+| **Lift** | Bundled search and action launcher, bound to `Super+D` in fresh configs |
 | **Capture** | Native menu, region, screen, and window screenshots plus portal screencasting |
 | **IPC/API** | Persistent typed clients, capability discovery, subscriptions, and `halleyctl` |
 | **XWayland** | Native embedded XWayland and compositor-owned X11 window management |
@@ -246,7 +246,7 @@ swipe, and hold actions.
 | Clusters | `Super+0..9` | Open a per-monitor cluster slot |
 | Bearings | `Super+Z` / `Super+Shift+Z` | Hold or toggle Bearings |
 | Launch | `Super+T` | Open the first supported terminal |
-| Launch | `Super+D` | Open Fuzzel (Halley Lift is a commented alternative) |
+| Launch | `Super+D` | Open Halley Lift, the bundled launcher (Fuzzel is a commented alternative) |
 | Reload | `Super+Shift+R` | Reload the selected configuration |
 | Zoom | `Super+-` / `Super+=` / `Super+Shift+0` | Zoom out, in, or reset |
 | Pointer | `Super+Left Mouse` | Move a window |
@@ -258,6 +258,20 @@ The same chord may be assigned distinct actions in `field`, `cluster`, `tile`,
 and `stack` scopes. Left/right Super, Alt, Ctrl, and Shift can be matched
 independently. Compositor move, resize, and pan grabs are ordinary remappable
 bindings rather than hardcoded mouse policy.
+
+`Super+D` opens Halley Lift, the bundled search and action launcher documented
+in [`halley-lift/README.md`](halley-lift/README.md). It searches applications,
+running nodes, clusters, compositor actions, and config files from one field,
+and it can run terminal commands. Prefer a separate launcher? Any non-built-in
+action string is a command line, so replacing one line is enough:
+
+```rune
+"$var.mod+d" "fuzzel"
+```
+
+Existing configurations keep whatever launcher they already bind. Only a newly
+generated config defaults to Halley Lift, and config migration never rewrites a
+launcher binding.
 
 ---
 
