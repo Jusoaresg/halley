@@ -181,9 +181,15 @@ impl ProviderIndex {
         }
 
         results.retain(|result| mode_allows(ctx.mode, &result.kind));
+        let empty_general = ctx.mode == LiftMode::General && ctx.query_lower.is_empty();
         results.sort_by(|a, b| {
             b.is_field_pinned
                 .cmp(&a.is_field_pinned)
+                .then_with(|| {
+                    empty_general
+                        .then(|| provider_rank(&a.kind).cmp(&provider_rank(&b.kind)))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .then_with(|| b.score.total_cmp(&a.score))
                 .then_with(|| a.section.cmp(&b.section))
                 .then_with(|| a.title.cmp(&b.title))
@@ -672,6 +678,18 @@ impl ProviderIndex {
     }
 }
 
+fn provider_rank(kind: &LiftResultKind) -> u8 {
+    match kind {
+        LiftResultKind::App => 0,
+        LiftResultKind::Node => 1,
+        LiftResultKind::Cluster => 2,
+        LiftResultKind::Action => 3,
+        LiftResultKind::Config => 4,
+        LiftResultKind::CreateCluster => 5,
+        LiftResultKind::Term => 6,
+    }
+}
+
 fn match_score(query_lower: &str, haystack_lower: &str) -> Option<f64> {
     if query_lower.is_empty() {
         return Some(1.0);
@@ -1037,6 +1055,67 @@ exec '\''/bin/zsh'\'' -i'"#
                 "the default empty state must name the {provider} provider: {placeholder:?}"
             );
         }
+    }
+
+    /// The default result cap must not let cluster score bonuses hide the
+    /// primary application-launch provider on a fresh `Mod+D` press.
+    #[test]
+    fn empty_general_query_orders_providers_before_default_truncation() {
+        let mut index = provider_index_with_every_provider();
+        index.apps = (0..8)
+            .map(|idx| {
+                app(
+                    format!("app-{idx}").as_str(),
+                    format!("App {idx}").as_str(),
+                    "true",
+                    "application-x-executable",
+                )
+            })
+            .collect();
+        index.nodes = (0..3)
+            .map(|idx| CachedNode {
+                id: idx,
+                title: format!("Node {idx}"),
+                subtitle: "window on DP-1".into(),
+                search_text: format!("node {idx}"),
+                pinned: false,
+            })
+            .collect();
+        index.clusters = (0..4)
+            .map(|idx| CachedCluster {
+                id: idx,
+                title: format!("Cluster {idx}"),
+                subtitle: "2 members on DP-1".into(),
+                search_text: format!("cluster {idx}"),
+            })
+            .collect();
+
+        let results = index.search(&SearchContext {
+            mode: LiftMode::General,
+            query: String::new(),
+            query_lower: String::new(),
+            max_results: LiftConfig::default().max_results,
+            draft_count: 0,
+        });
+
+        assert_eq!(results.len(), 12);
+        assert!(
+            results[..8]
+                .iter()
+                .all(|result| result.kind == LiftResultKind::App),
+            "applications must lead the default empty state: {results:#?}"
+        );
+        assert!(
+            results[8..11]
+                .iter()
+                .all(|result| result.kind == LiftResultKind::Node),
+            "running nodes must follow applications: {results:#?}"
+        );
+        assert_eq!(
+            results[11].kind,
+            LiftResultKind::Cluster,
+            "advanced providers follow application launch and node retrieval"
+        );
     }
 
     /// The documented prefixes keep their provider reachable and do not leak
