@@ -234,6 +234,23 @@ marker's footprint in Field space, unpinned ordinary nodes and collapsed
 cluster cores reflow together around each other and stationary active windows.
 Transient labels and shadows never reserve space.
 
+That zoom reflow is reversible. The first time a zoom step moves a landmark,
+Halley remembers the position it left behind as its pre-zoom home. Further
+zoom-out keeps reflowing from where the marker is displayed without replacing
+that home, and zooming back in returns the landmark toward it as the shrinking
+footprint makes room, sliding from the position actually on screen. Active
+windows and pinned landmarks stay where they are, so a landmark whose home is
+still blocked waits at the closest legal point and finishes the trip on a later
+zoom step.
+
+Direct manipulation is permanent. Dragging a displaced landmark discards its
+home immediately, and every landmark a drag physically pushes in the collision
+chain discards its home too, so nothing snaps back after a push. Pinning a
+landmark, transferring it to another monitor, moving it with `halleyctl node
+move`, collapsing or restoring its window, and ordinary placement reflow all
+commit the displayed position the same way. Zoom memory is per monitor and
+lasts only for the running session.
+
 The same `field.gap` insets field-maximized windows from the usable output
 work area. See [Field behavior and maximize](field.md).
 

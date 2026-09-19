@@ -17,7 +17,10 @@ position with the least overlap.
 
 During zoom-out, unpinned collapsed cores and ordinary nodes reflow together
 when their screen-constant collision footprints would overlap each other or an
-active window. Pinned landmarks remain fixed.
+active window. Pinned landmarks remain fixed. A core displaced this way keeps a
+pre-zoom home and returns to it as the footprint shrinks again on zoom-in,
+unless a drag, a physical push, or a cluster operation rebases the core's
+position first.
 
 ## Deleting a workspace
 

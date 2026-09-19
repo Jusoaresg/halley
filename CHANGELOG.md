@@ -79,6 +79,14 @@ All notable changes to this project will be documented in this file.
   baseline without changing compositor behavior.
 
 ### Fixed
+- Reverse the landmark displacement that camera zoom-out causes. The first
+  zoom step that moves a collapsed node or cluster core remembers its pre-zoom
+  home, further zoom-out reflows from the displayed position without replacing
+  that home, and zoom-in returns each landmark toward it while active windows
+  and pinned landmarks stay put. Dragging a displaced landmark, pushing one in
+  a drag's collision chain, pinning, output transfer, discrete IPC movement,
+  collapse/restore, and ordinary placement reflow still rebase the position
+  permanently, so no pushed neighbor snaps back later.
 - Keep ordinary client click-drags in the grabbed surface's coordinate space
   across windows, panels, output cameras, and moving subsurfaces/popups. Preserve
   the client cursor while held and restore normal pointer routing immediately
