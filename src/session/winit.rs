@@ -61,6 +61,29 @@ impl super::RenderDriver for WinitDriver {
         f(self.backend.renderer())
     }
 
+    fn register_dmabuf_source(
+        &mut self,
+        client: smithay::reexports::wayland_server::Client,
+        source: smithay::backend::allocator::dmabuf::DmabufSource,
+    ) -> bool {
+        self.loop_handle
+            .insert_source(source, move |_, _, app| {
+                let dh = app.wayland.display_handle.clone();
+                smithay::wayland::compositor::CompositorHandler::client_compositor_state(
+                    app, &client,
+                )
+                .blocker_cleared(app, &dh);
+                Ok(())
+            })
+            .map(|_| true)
+            .unwrap_or_else(|err| {
+                eventline::warn!(
+                    "implicit sync: failed to register buffer readiness source: {err}"
+                );
+                false
+            })
+    }
+
     fn schedule_render_completion(
         &mut self,
         sync: smithay::backend::renderer::sync::SyncPoint,

@@ -571,13 +571,17 @@ fn native_target_buffer_ready(
     committed_window_size: Option<Size<i32, Logical>>,
     surface_size: Option<Size<i32, Logical>>,
 ) -> bool {
-    if !advanced {
-        return false;
-    }
-    if committed_window_size.map(|size| size.to_physical(1)) == Some(outgoing_window_size) {
+    // A restored session can leave fullscreen at the same window size. The
+    // client may then acknowledge the state change without attaching another
+    // buffer. That is a valid endpoint, not a missing repaint. Protocol state
+    // is still checked by the owning fullscreen/maximize transaction.
+    if committed_window_size.map(|size| size.to_physical(1)) == Some(outgoing_window_size)
+        && surface_size.is_some()
+        && surface_size == outgoing_surface_size
+    {
         return true;
     }
-    surface_size.is_some() && surface_size != outgoing_surface_size
+    advanced && surface_size.is_some() && surface_size != outgoing_surface_size
 }
 
 /// Root repaint evidence remains valid while Firefox finishes the matching
@@ -587,11 +591,7 @@ fn native_target_candidate_ready(
     root_commit_advanced: bool,
     endpoint_ready: bool,
 ) -> bool {
-    if root_commit_advanced {
-        endpoint_ready
-    } else {
-        previous_candidate
-    }
+    endpoint_ready || (!root_commit_advanced && previous_candidate)
 }
 
 fn damage_covers_buffer(size: Size<i32, Buffer>, damage: &[Rectangle<i32, Buffer>]) -> bool {
@@ -731,6 +731,34 @@ mod tests {
             Some((1036, 704).into()),
             Some((2560, 1440).into()),
             Some((2560, 1440).into()),
+        ));
+    }
+
+    #[test]
+    fn restored_fullscreen_can_exit_with_a_state_only_commit() {
+        let window = (2560, 1440).into();
+        let root = Some((2560, 1440).into());
+        let ready = native_target_buffer_ready(false, window, root, root, root);
+        assert!(ready);
+        assert!(native_target_candidate_ready(false, false, ready));
+    }
+
+    #[test]
+    fn state_only_commit_cannot_approve_a_resize_with_the_old_buffer() {
+        let root = Some((2560, 1440).into());
+        assert!(!native_target_buffer_ready(
+            false,
+            (2560, 1440).into(),
+            root,
+            Some((996, 664).into()),
+            root,
+        ));
+        assert!(!native_target_buffer_ready(
+            false,
+            (2560, 1440).into(),
+            None,
+            root,
+            None,
         ));
     }
 

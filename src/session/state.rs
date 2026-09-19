@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::path::PathBuf;
 
-use smithay::backend::allocator::dmabuf::Dmabuf;
+use smithay::backend::allocator::dmabuf::{Dmabuf, DmabufSource};
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::sync::SyncPoint;
 use smithay::input::{Seat, SeatState};
@@ -59,6 +59,7 @@ pub trait RenderDriver: 'static {
         sync: SyncPoint,
         completion: Box<dyn FnOnce() + 'static>,
     ) -> Result<(), String>;
+    fn register_dmabuf_source(&mut self, client: Client, source: DmabufSource) -> bool;
     fn register_drm_syncobj_source(
         &mut self,
         _client: Client,

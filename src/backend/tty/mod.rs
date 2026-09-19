@@ -15,6 +15,7 @@ use smithay::backend::drm::output::{DrmOutput, DrmOutputManager, DrmOutputRender
 use smithay::backend::drm::{
     DrmDevice, DrmDeviceFd, DrmDeviceNotifier, DrmNode, NodeType, VrrSupport,
 };
+use smithay::backend::egl::context::ContextPriority;
 use smithay::backend::egl::{EGLContext, EGLDisplay};
 use smithay::backend::renderer::ImportDma;
 use smithay::backend::renderer::element::solid::SolidColorRenderElement;
@@ -203,7 +204,9 @@ impl TtyBackend {
             );
 
             let egl_display = unsafe { EGLDisplay::new(gbm.clone())? };
-            let egl_context = EGLContext::new(&egl_display)?;
+            // Keep desktop rendering responsive when client GPU queues are busy,
+            // as Niri and Hyprland do. Smithay ignores this hint if unsupported.
+            let egl_context = EGLContext::new_with_priority(&egl_display, ContextPriority::High)?;
             let mut renderer = unsafe { GlesRenderer::new(egl_context)? };
             let renderer_formats: Vec<Format> = renderer
                 .egl_context()

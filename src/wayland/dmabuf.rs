@@ -1,3 +1,4 @@
+use smithay::backend::allocator::dmabuf::{Dmabuf, DmabufBlocker, DmabufSource};
 use smithay::backend::renderer::element::RenderElementStates;
 use smithay::backend::renderer::element::utils::select_dmabuf_feedback;
 use smithay::desktop::layer_map_for_output;
@@ -11,6 +12,17 @@ use smithay::wayland::dmabuf::{
 
 use crate::backend::dmabuf::{DmabufCapabilities, SurfaceDmabufFeedback};
 use crate::wayland::{WaylandState, window_is_on_output};
+
+/// Keep an unfinished implicit-sync buffer out of committed renderer state.
+/// Only install a blocker when its one-shot readiness source was registered;
+/// an orphan blocker would freeze the surface permanently.
+pub fn defer_until_readable(
+    dmabuf: &Dmabuf,
+    register: impl FnOnce(DmabufSource) -> bool,
+) -> Option<DmabufBlocker> {
+    let (blocker, source) = dmabuf.generate_blocker(calloop::Interest::READ).ok()?;
+    register(source).then_some(blocker)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Advertisement {
@@ -150,6 +162,84 @@ mod tests {
     use smithay::backend::allocator::{Format, Fourcc, Modifier};
 
     use super::*;
+
+    // Pollable socket descriptors stand in for DMA-BUF plane fences here.
+    // No fake buffer is imported into a renderer; this exercises readiness,
+    // all-plane completion and event-loop liveness without a GPU dependency.
+    fn pending_planes() -> (Dmabuf, [std::os::unix::net::UnixStream; 2]) {
+        use smithay::backend::allocator::dmabuf::DmabufFlags;
+        use std::os::unix::net::UnixStream;
+        let (read_a, write_a) = UnixStream::pair().unwrap();
+        let (read_b, write_b) = UnixStream::pair().unwrap();
+        let mut builder = Dmabuf::builder(
+            (16, 16),
+            Fourcc::Argb8888,
+            Modifier::Linear,
+            DmabufFlags::empty(),
+        );
+        assert!(builder.add_plane(read_a.into(), 0, 0, 64));
+        assert!(builder.add_plane(read_b.into(), 1, 0, 64));
+        (builder.build().unwrap(), [write_a, write_b])
+    }
+
+    #[test]
+    fn pending_buffer_does_not_block_loop_and_releases_only_after_all_planes() {
+        use smithay::wayland::compositor::{Blocker, BlockerState};
+        use std::io::Write;
+        use std::time::Duration;
+        let (dmabuf, mut writers) = pending_planes();
+        let mut event_loop = calloop::EventLoop::<(usize, usize)>::try_new().unwrap();
+        let handle = event_loop.handle();
+        let blocker = defer_until_readable(&dmabuf, |source| {
+            handle
+                .insert_source(source, |_, _, state| {
+                    state.0 += 1;
+                    Ok(())
+                })
+                .is_ok()
+        })
+        .unwrap();
+        handle
+            .insert_source(calloop::timer::Timer::immediate(), |_, _, state| {
+                state.1 += 1;
+                calloop::timer::TimeoutAction::Drop
+            })
+            .unwrap();
+        let mut state = (0, 0);
+        event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
+        assert_eq!(
+            state,
+            (0, 1),
+            "unrelated work must run while the buffer is pending"
+        );
+        assert_eq!(blocker.state(), BlockerState::Pending);
+        writers[0].write_all(&[1]).unwrap();
+        event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
+        assert_eq!(state.0, 0);
+        assert_eq!(blocker.state(), BlockerState::Pending);
+        writers[1].write_all(&[1]).unwrap();
+        event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
+        assert_eq!(state.0, 1);
+        assert_eq!(blocker.state(), BlockerState::Released);
+        event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
+        assert_eq!(state.0, 1, "readiness notification is one-shot");
+    }
+
+    #[test]
+    fn ready_buffers_do_not_register_a_source_or_install_a_blocker() {
+        use std::io::Write;
+        let (dmabuf, mut writers) = pending_planes();
+        for writer in &mut writers {
+            writer.write_all(&[1]).unwrap();
+        }
+        assert!(defer_until_readable(&dmabuf, |_| panic!("already ready")).is_none());
+    }
+
+    #[test]
+    fn failed_source_registration_does_not_leave_an_orphan_blocker() {
+        let (dmabuf, _writers) = pending_planes();
+        assert!(defer_until_readable(&dmabuf, |_| false).is_none());
+    }
 
     fn capabilities(main_device: Option<libc::dev_t>) -> DmabufCapabilities {
         let formats = [Format {

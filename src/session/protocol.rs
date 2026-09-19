@@ -164,17 +164,38 @@ impl<D: SessionDriver> CompositorHandler for Session<D> {
                 super::closing::capture_native_toplevel_before_unmap(session, surface);
             }
 
-            if session.drm_syncobj_state.is_none() {
-                return;
-            }
-            let acquire_point = with_states(surface, |states| {
-                let opted_in = states
+            let explicit_sync = with_states(surface, |states| {
+                states
                     .data_map
                     .get::<RefCell<Option<WpLinuxDrmSyncobjSurfaceV1>>>()
-                    .is_some_and(|surface| surface.borrow().is_some());
-                if !opted_in {
-                    return None;
+                    .is_some_and(|surface| surface.borrow().is_some())
+            });
+            if !explicit_sync {
+                // Defer implicit-sync buffers too. Importing/sampling an unfinished
+                // client buffer can otherwise stall the compositor's render queue.
+                let dmabuf = with_states(surface, |states| {
+                    let mut attributes = states.cached_state.get::<SurfaceAttributes>();
+                    match attributes.pending().buffer.as_ref() {
+                        Some(BufferAssignment::NewBuffer(buffer)) => {
+                            smithay::wayland::dmabuf::get_dmabuf(buffer).cloned().ok()
+                        }
+                        _ => None,
+                    }
+                });
+                if let Some(dmabuf) = dmabuf
+                    && let Some(client) = surface.client()
+                    && let Some(blocker) =
+                        wayland::dmabuf::defer_until_readable(&dmabuf, |source| {
+                            session.driver.register_dmabuf_source(client, source)
+                        })
+                {
+                    smithay::wayland::compositor::add_blocker(surface, blocker);
                 }
+                return;
+            }
+            // Explicit-sync surfaces must never also wait on implicit fences.
+            // The protocol implementation validates missing acquire points.
+            let acquire_point = with_states(surface, |states| {
                 states
                     .cached_state
                     .get::<DrmSyncobjCachedState>()
