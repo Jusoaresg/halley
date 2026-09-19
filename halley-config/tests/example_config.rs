@@ -41,16 +41,16 @@ fn example_config_parses_end_to_end() {
     let launcher = keybinds
         .binds
         .iter()
-        .find(|bind| bind.action == Action::Spawn("fuzzel".into()))
-        .expect("Fuzzel launcher bind present");
+        .find(|bind| bind.action == Action::Spawn("halley-lift".into()))
+        .expect("Halley Lift launcher bind present");
     assert_eq!(launcher.key, "d");
     assert!(launcher.modifiers.super_key);
     assert!(
         keybinds
             .binds
             .iter()
-            .all(|bind| bind.action != Action::Spawn("halley-lift".into())),
-        "the commented Halley Lift alternative must not become active"
+            .all(|bind| bind.action != Action::Spawn("fuzzel".into())),
+        "the commented Fuzzel alternative must not become active"
     );
 
     let quit = keybinds
@@ -248,6 +248,25 @@ fn split_example_config_parses_end_to_end() {
         "split example includes grabbed-window Field panning"
     );
     assert_field_first_autostart(&runtime.autostart);
+    assert_eq!(
+        runtime
+            .keybinds
+            .binds
+            .iter()
+            .find(|bind| bind.key == "d" && bind.modifiers.super_key)
+            .expect("split example binds Mod+D")
+            .action,
+        Action::Spawn("halley-lift".into()),
+        "shipped examples launch Halley Lift on Mod+D"
+    );
+    assert!(
+        runtime
+            .keybinds
+            .binds
+            .iter()
+            .all(|bind| bind.action != Action::Spawn("fuzzel".into())),
+        "the split example keeps Fuzzel as a commented alternative only"
+    );
     assert_eq!(
         runtime.decorations.titlebars.button_position,
         halley_config::TitlebarButtonPosition::Right

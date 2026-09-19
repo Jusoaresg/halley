@@ -335,6 +335,31 @@ mod tests {
         );
     }
 
+    /// Milestone 2: the generated config's `Mod+D` front door resolves to the
+    /// bundled Halley Lift launcher, and the documented Fuzzel alternative
+    /// stays commented out rather than becoming a second, competing binding.
+    #[test]
+    fn default_config_mod_d_launches_halley_lift() {
+        let resolved = resolve_binds(&Keybinds::default(), BackendKind::Tty);
+        let launcher = resolved
+            .iter()
+            .find(|bind| bind.action == Action::Spawn("halley-lift".to_string()))
+            .expect("default Halley Lift launcher bind");
+        assert!(launcher.modifiers.super_key);
+        assert!(!launcher.modifiers.alt);
+        assert!(!launcher.modifiers.shift);
+        assert_eq!(
+            launcher.trigger,
+            ResolvedTrigger::Keysym(xkb::keysym_from_name("d", xkb::KEYSYM_NO_FLAGS))
+        );
+        assert!(
+            resolved
+                .iter()
+                .all(|bind| bind.action != Action::Spawn("fuzzel".to_string())),
+            "Fuzzel is an opt-in alternative, not a default binding"
+        );
+    }
+
     #[test]
     fn every_configured_action_is_resolved() {
         let keybinds = Keybinds::default();

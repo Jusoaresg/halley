@@ -910,11 +910,13 @@ keybinds:
   # one command explicitly.
   "$var.mod+t" "default-terminal"
 
-  # Open Fuzzel, the default application launcher.
-  "$var.mod+d" "fuzzel"
+  # Open Halley Lift, the bundled search and action launcher. Lift searches
+  # applications, running nodes, clusters, actions, and config files, and it
+  # can run terminal commands.
+  "$var.mod+d" "halley-lift"
 
-  # Use Halley's bundled search and action launcher instead.
-  # "$var.mod+d" "halley-lift"
+  # Prefer a separate launcher instead? Fuzzel is an easy alternative:
+  # "$var.mod+d" "fuzzel"
 
   # Any action string that is not a built-in action is executed as a command
   # line. These bindings control the default PipeWire sink through `wpctl`.

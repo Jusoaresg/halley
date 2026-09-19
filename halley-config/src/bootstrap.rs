@@ -136,8 +136,8 @@ mod tests {
     #[test]
     fn template_contains_overview_and_old_halley_controls() {
         for expected in [
-            "\"$var.mod+d\" \"fuzzel\"",
-            "# \"$var.mod+d\" \"halley-lift\"",
+            "\"$var.mod+d\" \"halley-lift\"",
+            "# \"$var.mod+d\" \"fuzzel\"",
             "\"$var.mod+n\" \"toggle-state\"",
             "\"$var.mod+o\" \"apogee\"",
             "\"alt+tab\" \"cycle-focus\"",
@@ -294,5 +294,99 @@ mod tests {
         assert_eq!(view.focus_rings.by_output.len(), 2);
         assert!(view.focus_rings.by_output.contains_key("DP-1"));
         assert!(view.focus_rings.by_output.contains_key("DP-2"));
+    }
+
+    /// Milestone 2: a fresh installation's front door is Halley Lift. The
+    /// generated config launches the bundled search and action launcher on
+    /// `Mod+D` and keeps Fuzzel only as a commented, opt-in alternative.
+    #[test]
+    fn template_binds_mod_d_to_halley_lift_with_fuzzel_as_the_alternative() {
+        let config = RuneConfig::from_str(DEFAULT_CONFIG).expect("bootstrap template parses");
+        let keybinds = crate::parse_keybinds(&config).expect("bootstrap keybinds parse");
+
+        let mut mod_d = keybinds
+            .binds
+            .iter()
+            .filter(|bind| bind.key == "d" && bind.modifiers.super_key);
+        let launcher = mod_d.next().expect("a fresh config binds Mod+D");
+        assert_eq!(
+            launcher.action,
+            crate::Action::Spawn("halley-lift".to_string()),
+            "Mod+D must launch Halley Lift in a fresh config"
+        );
+        assert!(
+            mod_d.next().is_none(),
+            "the generated config activates Mod+D exactly once"
+        );
+        assert!(
+            !keybinds
+                .binds
+                .iter()
+                .any(|bind| bind.action == crate::Action::Spawn("fuzzel".to_string())),
+            "Fuzzel must stay a documented alternative, not the default launcher"
+        );
+        assert!(
+            DEFAULT_CONFIG.contains("  # \"$var.mod+d\" \"fuzzel\"\n"),
+            "the commented Fuzzel alternative stays in the generated template"
+        );
+
+        // The generated file, not just the embedded template, must survive the
+        // compositor's own runtime loading path with the Lift binding intact.
+        let scratch = ScratchDir::new("template_binds_mod_d_to_halley_lift");
+        let config_file = scratch.path().join("halley").join("halley.rune");
+        assert!(
+            bootstrap_default_config_at(&config_file).unwrap(),
+            "a fresh install writes the generated config"
+        );
+        let runtime = crate::load_runtime_config_at(&config_file).expect("generated config loads");
+        assert_eq!(
+            runtime
+                .keybinds
+                .binds
+                .iter()
+                .find(|bind| bind.key == "d" && bind.modifiers.super_key)
+                .expect("generated config binds Mod+D")
+                .action,
+            crate::Action::Spawn("halley-lift".to_string())
+        );
+    }
+
+    /// Milestone 2 boundary: bootstrap only ever creates a missing config, so
+    /// an existing Fuzzel (or any other) launcher binding is never rewritten.
+    #[test]
+    fn does_not_rewrite_an_existing_fuzzel_launcher_binding() {
+        const EXISTING: &str = concat!(
+            "keybinds:\n",
+            "  mod \"super\"\n",
+            "  \"$var.mod+d\" \"fuzzel\"\n",
+            "end\n",
+        );
+
+        let scratch = ScratchDir::new("does_not_rewrite_an_existing_fuzzel_launcher_binding");
+        let config_file = scratch.path().join("halley").join("halley.rune");
+        fs::create_dir_all(config_file.parent().unwrap()).unwrap();
+        fs::write(&config_file, EXISTING).unwrap();
+
+        let wrote = bootstrap_default_config_at(&config_file).unwrap();
+
+        assert!(!wrote, "bootstrap must not write when a config exists");
+        assert_eq!(
+            fs::read_to_string(&config_file).unwrap(),
+            EXISTING,
+            "an existing launcher binding must stay byte-for-byte unchanged"
+        );
+
+        let config = RuneConfig::from_str(EXISTING).expect("existing config parses");
+        let keybinds = crate::parse_keybinds(&config).expect("existing keybinds parse");
+        assert_eq!(
+            keybinds
+                .binds
+                .iter()
+                .find(|bind| bind.key == "d" && bind.modifiers.super_key)
+                .expect("existing Mod+D bind")
+                .action,
+            crate::Action::Spawn("fuzzel".to_string()),
+            "existing users keep their own launcher binding"
+        );
     }
 }

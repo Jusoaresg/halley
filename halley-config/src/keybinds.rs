@@ -331,8 +331,8 @@ mod tests {
         let launcher = kb
             .binds
             .iter()
-            .find(|bind| bind.action == Action::Spawn("fuzzel".into()))
-            .expect("Fuzzel launcher bind present");
+            .find(|bind| bind.action == Action::Spawn("halley-lift".into()))
+            .expect("Halley Lift launcher bind present");
         assert!(launcher.modifiers.super_key);
         assert_eq!(launcher.key, "d");
 
