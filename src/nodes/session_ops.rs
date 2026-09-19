@@ -344,31 +344,51 @@ pub(crate) fn restore_landmarks_for_zoom<D: crate::session::SessionDriver>(
     changed
 }
 
-pub(super) fn apply_dynamics_positions<D: crate::session::SessionDriver>(
-    session: &mut crate::session::Session<D>,
-    positions: HashMap<NodeId, Vec2>,
-    authority: Option<NodeId>,
+fn apply_cluster_core_dynamics_positions(
+    nodes: &mut NodesState,
+    clusters: &mut crate::clusters::ClusterSystem,
+    positions: &HashMap<NodeId, Vec2>,
 ) -> HashSet<String> {
     let core_changes = positions
         .iter()
         .filter_map(|(id, position)| {
-            let cluster = session.clusters.cluster_for_core(*id)?;
-            let metadata = session.clusters.metadata(cluster)?;
+            let cluster = clusters.cluster_for_core(*id)?;
+            let metadata = clusters.metadata(cluster)?;
             ((position.x - metadata.core_position.x).abs() > 0.001
                 || (position.y - metadata.core_position.y).abs() > 0.001)
                 .then(|| (cluster, *id, *position, metadata.output.clone()))
         })
         .collect::<Vec<_>>();
+    let mut outputs = HashSet::new();
+    for (cluster, core, position, output) in core_changes {
+        if clusters.move_core(cluster, &output, position) {
+            if let Some(node) = nodes.field.node_mut(core) {
+                node.pos = position;
+            }
+            // Physics and rigid moves are physical truth: whatever they move,
+            // including a collision-chain neighbour, is no longer a zoom offset.
+            nodes.commit_zoom_home(core);
+            outputs.insert(output);
+        }
+    }
+    outputs
+}
+
+pub(super) fn apply_dynamics_positions<D: crate::session::SessionDriver>(
+    session: &mut crate::session::Session<D>,
+    positions: HashMap<NodeId, Vec2>,
+    authority: Option<NodeId>,
+) -> HashSet<String> {
     let changes = positions
-        .into_iter()
+        .iter()
         .filter_map(|(id, position)| {
-            let record = session.nodes.record(id)?;
-            let current = session.nodes.field.node(id)?.pos;
+            let record = session.nodes.record(*id)?;
+            let current = session.nodes.field.node(*id)?.pos;
             ((position.x - current.x).abs() > 0.001 || (position.y - current.y).abs() > 0.001).then(
                 || {
                     (
-                        id,
-                        position,
+                        *id,
+                        *position,
                         record.collapsed,
                         record.output.clone(),
                         record.window.clone(),
@@ -378,18 +398,11 @@ pub(super) fn apply_dynamics_positions<D: crate::session::SessionDriver>(
             )
         })
         .collect::<Vec<_>>();
-    let mut outputs = HashSet::new();
-    for (cluster, core, position, output) in core_changes {
-        if session.clusters.move_core(cluster, &output, position) {
-            if let Some(node) = session.nodes.field.node_mut(core) {
-                node.pos = position;
-            }
-            // Physics and rigid moves are physical truth: whatever they move,
-            // including a collision-chain neighbour, is no longer a zoom offset.
-            session.nodes.commit_zoom_home(core);
-            outputs.insert(output);
-        }
-    }
+    let mut outputs = apply_cluster_core_dynamics_positions(
+        &mut session.nodes,
+        &mut session.clusters,
+        &positions,
+    );
     for (id, position, collapsed, output, window, size) in changes {
         outputs.insert(output);
         session.nodes.commit_zoom_home(id);
@@ -1476,8 +1489,85 @@ pub fn tick_decay<D: crate::session::SessionDriver>(
 
 #[cfg(test)]
 mod close_tests {
-    use super::{collapse_allowed, hard_protected_from_decay, preferred_close_candidate};
-    use halley_core::field::NodeId;
+    use super::{
+        apply_cluster_core_dynamics_positions, collapse_allowed, dynamics,
+        hard_protected_from_decay, preferred_close_candidate,
+    };
+    use halley_core::cluster::layout::ClusterWorkspaceLayoutKind;
+    use halley_core::field::{NodeId, Vec2};
+
+    #[test]
+    fn core_drag_commits_zoom_homes_for_core_and_physically_pushed_neighbour() {
+        let config = halley_config::RuntimeConfig::default();
+        let mut nodes = crate::nodes::NodesState::new(&config);
+        let mut clusters =
+            crate::clusters::ClusterSystem::new(config.clusters, config.animations.cluster);
+        let first_member = nodes.field.spawn_surface(
+            "first-member",
+            Vec2 { x: 0.0, y: 0.0 },
+            Vec2 { x: 200.0, y: 150.0 },
+        );
+        let neighbour_member = nodes.field.spawn_surface(
+            "neighbour-member",
+            Vec2 { x: 100.0, y: 0.0 },
+            Vec2 { x: 200.0, y: 150.0 },
+        );
+        let first = clusters
+            .create_collapsed_cluster(
+                &mut nodes.field,
+                "first".into(),
+                "DP-1".into(),
+                ClusterWorkspaceLayoutKind::Tiling,
+                vec![first_member],
+                Vec2 { x: 0.0, y: 0.0 },
+            )
+            .expect("first cluster");
+        let neighbour = clusters
+            .create_collapsed_cluster(
+                &mut nodes.field,
+                "neighbour".into(),
+                "DP-1".into(),
+                ClusterWorkspaceLayoutKind::Tiling,
+                vec![neighbour_member],
+                Vec2 { x: 100.0, y: 0.0 },
+            )
+            .expect("neighbour cluster");
+        let core = clusters.core_node(first).expect("first core");
+        let neighbour_core = clusters.core_node(neighbour).expect("neighbour core");
+        nodes.remember_zoom_home(core, Vec2 { x: -20.0, y: 0.0 });
+        nodes.remember_zoom_home(neighbour_core, Vec2 { x: 80.0, y: 0.0 });
+
+        let extent = crate::clusters::CORE_DIAMETER_PX * 0.5;
+        let bodies = [
+            (core, Vec2 { x: 0.0, y: 0.0 }),
+            (neighbour_core, Vec2 { x: 100.0, y: 0.0 }),
+        ]
+        .into_iter()
+        .map(|(id, pos)| dynamics::Body {
+            id,
+            kind: dynamics::BodyKind::Node,
+            pos,
+            extents: dynamics::CollisionExtents::symmetric(Vec2 {
+                x: extent,
+                y: extent,
+            }),
+            gap: 0.0,
+            pinned: false,
+            output: "DP-1".into(),
+        })
+        .collect();
+
+        // This matches the rigid core-drag seam: solve the swept collision chain,
+        // then apply every changed core through cluster metadata and NodesState.
+        let positions = dynamics::solve_static_swept(bodies, core, Vec2 { x: 100.0, y: 0.0 });
+        let outputs = apply_cluster_core_dynamics_positions(&mut nodes, &mut clusters, &positions);
+
+        assert_eq!(outputs, std::collections::HashSet::from(["DP-1".into()]));
+        assert!(clusters.metadata(first).unwrap().core_position.x > 0.0);
+        assert!(clusters.metadata(neighbour).unwrap().core_position.x > 100.0);
+        assert_eq!(nodes.zoom_home(core), None);
+        assert_eq!(nodes.zoom_home(neighbour_core), None);
+    }
 
     #[test]
     fn arranged_windows_are_hard_protected_from_decay() {
