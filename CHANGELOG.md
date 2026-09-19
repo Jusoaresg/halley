@@ -65,8 +65,10 @@ All notable changes to this project will be documented in this file.
   Collapsed nodes reserve their full restored decorated-window bounds while
   panning, so opening them afterward remains completely in view.
 - Update the README's Discord community invite.
-- Seed fresh and example configs with six empty numbered workspaces on each of
-  the two sample outputs, without launching applications.
+- Start fresh and example configurations on an empty Field instead of
+  pre-creating numbered cluster workspaces. Explicit startup-cluster
+  declarations remain supported, and existing user configurations are
+  unchanged.
 - Keep clusters and their core identity after the final member closes so named
   empty workspaces remain available for later windows.
 - Add `decorations.titlebars.text-size` so window-title text can use a size

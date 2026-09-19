@@ -73,11 +73,14 @@ Fields:
 At most ten clusters can occupy an output. Startup cores are arranged as a
 centered row near the top of each output, in declaration order.
 
-A freshly bootstrapped config and both shipped config examples declare twelve
-empty numbered workspaces: `1` through `6` initially on the sample `DP-1`
-output, and `7` through `12` on `DP-2`. They launch no applications. Replace
-the sample connector names, rename the workspaces, or remove declarations to
-match the machine. Existing user configs are never rewritten by bootstrap.
+A freshly bootstrapped config declares no startup clusters, and neither shipped
+config example declares any either. A new session therefore begins on an empty
+Field, which is the initial workspace: windows you launch open directly into it.
+Startup clusters are opt-in — add `autostart.cluster` declarations like the ones
+above only when you want an output to begin with a named core. Existing user
+configs are never rewritten by bootstrap, so a config that already declares
+startup clusters keeps creating those cores at session startup exactly as
+before.
 
 ### Launch attribution
 

@@ -87,6 +87,11 @@ camera. Its dimensions and offset are configurable per output. Windows outside
 that ring become candidates for timer-driven decay rather than disappearing
 because an arbitrary global window count was exceeded.
 
+A fresh Halley session begins on this empty Field. A newly generated config
+declares no startup clusters, so applications you launch open directly into the
+Field. Clusters are optional named contexts you add deliberately, either by
+declaring startup clusters in `autostart` or by creating them at runtime.
+
 ---
 
 ## Clusters
@@ -275,8 +280,10 @@ one atomic snapshot; invalid edits leave the last valid runtime state active.
 Nested Rune `gather` dependencies are watched recursively, including missing
 dependencies that are created after startup.
 
-The `autostart` section can also declare persistent named clusters using compact
-command arrays, including empty `members []` declarations. See
+A freshly generated config declares no startup clusters, so windows begin on the
+empty Field. The optional `autostart` section can still declare persistent named
+clusters using compact command arrays, including empty `members []`
+declarations. See
 [startup clusters](docs/clusters.md#startup-clusters) for syntax, launch
 attribution, output placement, and restart behavior.
 
