@@ -962,6 +962,114 @@ exec '\''/bin/zsh'\'' -i'"#
         );
     }
 
+    fn provider_index_with_every_provider() -> ProviderIndex {
+        ProviderIndex {
+            apps: vec![app("kitty", "Kitty", "kitty", "kitty")],
+            nodes: vec![CachedNode {
+                id: 7,
+                title: "notes.txt - editor".into(),
+                subtitle: "editor on DP-1".into(),
+                search_text: "notes.txt - editor editor DP-1".to_ascii_lowercase(),
+                pinned: false,
+            }],
+            clusters: vec![CachedCluster {
+                id: 3,
+                title: "Release".into(),
+                subtitle: "2 members on DP-1".into(),
+                search_text: "release 3 DP-1".to_ascii_lowercase(),
+            }],
+            live_loaded: true,
+            live_rx: None,
+            live_wake: None,
+            terminal: "kitty -e".into(),
+            terminal_icon_name: None,
+            client: None,
+        }
+    }
+
+    /// Milestone 2: a fresh `Mod+D` press must make launching *and* retrieval
+    /// immediately understandable. An empty query is exactly what Lift computes
+    /// on open, so every documented provider stays represented, with the plain
+    /// General-mode section names and their launch/open hints.
+    #[test]
+    fn empty_general_query_keeps_every_provider_available() {
+        let index = provider_index_with_every_provider();
+        let results = index.search(&SearchContext {
+            mode: LiftMode::General,
+            query: String::new(),
+            query_lower: String::new(),
+            max_results: 40,
+            draft_count: 0,
+        });
+
+        for (kind, section) in [
+            (LiftResultKind::App, "Applications"),
+            (LiftResultKind::Node, "Nodes"),
+            (LiftResultKind::Cluster, "Existing Clusters"),
+            (LiftResultKind::Action, "Actions"),
+            (LiftResultKind::Config, "Config"),
+        ] {
+            let result = results
+                .iter()
+                .find(|result| result.kind == kind)
+                .unwrap_or_else(|| panic!("a fresh search must still offer {kind:?}"));
+            assert_eq!(
+                result.section, section,
+                "{kind:?} keeps its General section"
+            );
+        }
+
+        let app_result = results
+            .iter()
+            .find(|result| result.kind == LiftResultKind::App)
+            .expect("application provider");
+        assert_eq!(app_result.shortcut_hint.as_deref(), Some("Enter launch"));
+        let node_result = results
+            .iter()
+            .find(|result| result.kind == LiftResultKind::Node)
+            .expect("node provider");
+        assert_eq!(node_result.shortcut_hint.as_deref(), Some("Enter open"));
+
+        let placeholder = LiftConfig::default().placeholder;
+        for provider in ["apps", "nodes", "clusters", "actions"] {
+            assert!(
+                placeholder.contains(provider),
+                "the default empty state must name the {provider} provider: {placeholder:?}"
+            );
+        }
+    }
+
+    /// The documented prefixes keep their provider reachable and do not leak
+    /// unrelated results: `app`, `node`, `cluster`, `action`, `config`, `term`.
+    #[test]
+    fn documented_modes_keep_each_provider_reachable() {
+        let index = provider_index_with_every_provider();
+        for (mode, kind) in [
+            (LiftMode::Apps, LiftResultKind::App),
+            (LiftMode::Nodes, LiftResultKind::Node),
+            (LiftMode::Clusters, LiftResultKind::Cluster),
+            (LiftMode::Actions, LiftResultKind::Action),
+            (LiftMode::Config, LiftResultKind::Config),
+            (LiftMode::Term, LiftResultKind::Term),
+        ] {
+            let results = index.search(&SearchContext {
+                mode,
+                query: String::new(),
+                query_lower: String::new(),
+                max_results: 40,
+                draft_count: 0,
+            });
+            assert!(
+                results.iter().any(|result| result.kind == kind),
+                "{mode:?} must still offer its {kind:?} provider"
+            );
+            assert!(
+                results.iter().all(|result| mode_allows(mode, &result.kind)),
+                "{mode:?} must not leak unrelated providers"
+            );
+        }
+    }
+
     fn app(id: &str, name: &str, exec: &str, icon: &str) -> DesktopApp {
         DesktopApp {
             id: id.into(),
