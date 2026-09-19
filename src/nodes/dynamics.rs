@@ -228,6 +228,114 @@ pub(super) fn solve_zoom_reflow(bodies: &[Body]) -> HashMap<NodeId, Vec2> {
     })
 }
 
+/// Positions closer than this are treated as the same landmark destination.
+pub(super) const LANDMARK_POSITION_EPSILON: f32 = 0.001;
+
+/// How many settle passes the zoom-return solver may run before giving up on
+/// further progress. Each pass lets a landmark that was waiting on a neighbour
+/// move again, so a short chain still resolves completely.
+const ZOOM_RETURN_PASSES: usize = 8;
+const ZOOM_RETURN_STEPS: usize = 12;
+
+fn position_reached(a: Vec2, b: Vec2) -> bool {
+    (a.x - b.x).abs() <= LANDMARK_POSITION_EPSILON && (a.y - b.y).abs() <= LANDMARK_POSITION_EPSILON
+}
+
+/// Walk one landmark as far toward `home` as the rest of the arrangement
+/// allows and leave its best legal position in `positions`.
+fn advance_toward_home(
+    bodies: &[Body],
+    positions: &mut HashMap<NodeId, Vec2>,
+    id: NodeId,
+    home: Vec2,
+) -> bool {
+    let Some(current) = positions.get(&id).copied() else {
+        return false;
+    };
+    if position_reached(current, home) {
+        return false;
+    }
+    // Landing exactly on home is better than any fraction of the way there, so
+    // test it before falling back to the incremental search.
+    positions.insert(id, home);
+    if positions_are_legal(bodies, positions) {
+        return true;
+    }
+    positions.insert(id, current);
+    let along = |fraction: f32| Vec2 {
+        x: current.x + (home.x - current.x) * fraction,
+        y: current.y + (home.y - current.y) * fraction,
+    };
+    let mut low = 0.0_f32;
+    let mut high = 1.0_f32;
+    let mut best = current;
+    for _ in 0..ZOOM_RETURN_STEPS {
+        let fraction = (low + high) * 0.5;
+        positions.insert(id, along(fraction));
+        let legal = positions_are_legal(bodies, positions);
+        positions.insert(id, current);
+        if legal {
+            low = fraction;
+            best = along(fraction);
+        } else {
+            high = fraction;
+        }
+    }
+    if position_reached(best, current) {
+        return false;
+    }
+    positions.insert(id, best);
+    true
+}
+
+/// Returns landmarks that camera zoom displaced back toward their remembered
+/// pre-zoom homes as the presented footprint shrinks again. Windows and pinned
+/// landmarks stay put as obstacles, and a blocked landmark stops at the
+/// farthest legal point on its way home so a later zoom-in can continue.
+pub(super) fn solve_zoom_return(
+    bodies: &[Body],
+    homes: &HashMap<NodeId, Vec2>,
+) -> HashMap<NodeId, Vec2> {
+    let mut positions = bodies
+        .iter()
+        .map(|body| (body.id, body.pos))
+        .collect::<HashMap<_, _>>();
+    let mut eligible = bodies
+        .iter()
+        .filter(|body| body.kind == BodyKind::Node && !body.pinned && homes.contains_key(&body.id))
+        .map(|body| body.id)
+        .collect::<Vec<_>>();
+    // Stable NodeId order keeps the incremental result reproducible.
+    eligible.sort_by_key(|id| id.as_u64());
+    if eligible.is_empty() {
+        return positions;
+    }
+
+    // Restoring the whole arrangement exactly is the common case once the
+    // original footprint is legal again, so try it before anything incremental.
+    let mut exact = positions.clone();
+    for id in &eligible {
+        exact.insert(*id, homes[id]);
+    }
+    if positions_are_legal(bodies, &exact) {
+        return exact;
+    }
+
+    for _ in 0..ZOOM_RETURN_PASSES {
+        let mut progressed = false;
+        for id in &eligible {
+            let Some(home) = homes.get(id).copied() else {
+                continue;
+            };
+            progressed |= advance_toward_home(bodies, &mut positions, *id, home);
+        }
+        if !progressed {
+            break;
+        }
+    }
+    positions
+}
+
 fn positions_are_legal(bodies: &[Body], positions: &HashMap<NodeId, Vec2>) -> bool {
     for i in 0..bodies.len() {
         for j in (i + 1)..bodies.len() {
@@ -580,6 +688,131 @@ mod tests {
         assert_ne!(positions[&NodeId::new(1)], Vec2 { x: 0.0, y: 0.0 });
         assert_eq!(positions[&NodeId::new(2)], Vec2 { x: 0.0, y: 0.0 });
         assert!(positions_are_legal(&bodies, &positions));
+    }
+
+    fn homes(entries: &[(u64, f32)]) -> HashMap<NodeId, Vec2> {
+        entries
+            .iter()
+            .map(|(id, x)| (NodeId::new(*id), Vec2 { x: *x, y: 0.0 }))
+            .collect()
+    }
+
+    #[test]
+    fn zoom_return_restores_every_displaced_landmark_once_its_home_is_legal() {
+        // Both landmarks were pushed apart by a zoom-out; the smaller footprint
+        // makes their original positions legal again.
+        let displaced_a = body(1, BodyKind::Node, 200.0);
+        let displaced_b = body(2, BodyKind::Node, 300.0);
+        let bodies = vec![displaced_a, displaced_b];
+        let positions = solve_zoom_return(&bodies, &homes(&[(1, 0.0), (2, 60.0)]));
+
+        assert_eq!(positions[&NodeId::new(1)], Vec2 { x: 0.0, y: 0.0 });
+        assert_eq!(positions[&NodeId::new(2)], Vec2 { x: 60.0, y: 0.0 });
+        assert!(positions_are_legal(&bodies, &positions));
+    }
+
+    #[test]
+    fn zoom_return_stops_at_the_legal_limit_when_a_home_stays_blocked() {
+        // The pinned window keeps the node's home illegal, so the node may only
+        // travel back as far as exact contact and stays recoverable.
+        let window = body(1, BodyKind::Window, 0.0);
+        let node = body(2, BodyKind::Node, 200.0);
+        let bodies = vec![window, node];
+        let positions = solve_zoom_return(&bodies, &homes(&[(2, 10.0)]));
+
+        assert_eq!(positions[&NodeId::new(1)], Vec2 { x: 0.0, y: 0.0 });
+        assert!(positions[&NodeId::new(2)].x < 200.0);
+        assert!(positions[&NodeId::new(2)].x >= 20.0);
+        assert!(!position_reached(
+            positions[&NodeId::new(2)],
+            Vec2 { x: 10.0, y: 0.0 }
+        ));
+        assert!(positions_are_legal(&bodies, &positions));
+    }
+
+    #[test]
+    fn zoom_return_settles_a_displaced_chain_in_bounded_passes() {
+        // The two remembered homes overlap, so only an incremental return is
+        // possible: the landmark with the free path goes all the way home and
+        // the other one comes back to exact contact and stays recoverable.
+        let free = body(1, BodyKind::Node, 200.0);
+        let blocked = body(2, BodyKind::Node, 400.0);
+        let bodies = vec![free, blocked];
+        let positions = solve_zoom_return(&bodies, &homes(&[(1, 0.0), (2, 10.0)]));
+
+        assert_eq!(positions[&NodeId::new(1)], Vec2 { x: 0.0, y: 0.0 });
+        assert!(!position_reached(
+            positions[&NodeId::new(2)],
+            Vec2 { x: 10.0, y: 0.0 }
+        ));
+        assert!(positions[&NodeId::new(2)].x >= 20.0);
+        assert!(positions[&NodeId::new(2)].x < 400.0);
+        assert!(positions_are_legal(&bodies, &positions));
+    }
+
+    #[test]
+    fn zoom_return_never_moves_pinned_landmarks_or_windows() {
+        let mut pinned_core = body(1, BodyKind::Node, 300.0);
+        pinned_core.pinned = true;
+        pinned_core.extents = CollisionExtents::symmetric(Vec2 { x: 20.0, y: 20.0 });
+        let window = body(2, BodyKind::Window, 400.0);
+        let bodies = vec![pinned_core, window];
+        let positions = solve_zoom_return(&bodies, &homes(&[(1, 0.0), (2, 0.0)]));
+
+        assert_eq!(positions[&NodeId::new(1)], Vec2 { x: 300.0, y: 0.0 });
+        assert_eq!(positions[&NodeId::new(2)], Vec2 { x: 400.0, y: 0.0 });
+    }
+
+    #[test]
+    fn zoom_return_keeps_outputs_isolated() {
+        let mut local = body(1, BodyKind::Node, 200.0);
+        local.output = "DP-1".into();
+        let mut remote = body(2, BodyKind::Node, 200.0);
+        remote.output = "DP-2".into();
+        let bodies = vec![local, remote];
+        let positions = solve_zoom_return(&bodies, &homes(&[(1, 0.0)]));
+
+        assert_eq!(positions[&NodeId::new(1)], Vec2 { x: 0.0, y: 0.0 });
+        assert_eq!(positions[&NodeId::new(2)], Vec2 { x: 200.0, y: 0.0 });
+    }
+
+    #[test]
+    fn zoom_return_treats_cluster_cores_like_ordinary_landmarks() {
+        let mut core = body(1, BodyKind::Node, 200.0);
+        core.extents = CollisionExtents::symmetric(Vec2 { x: 20.0, y: 20.0 });
+        let ordinary = body(2, BodyKind::Node, 90.0);
+        let bodies = vec![core, ordinary];
+        let positions = solve_zoom_return(&bodies, &homes(&[(1, 0.0)]));
+
+        assert_eq!(positions[&NodeId::new(1)], Vec2 { x: 0.0, y: 0.0 });
+        assert!(positions_are_legal(&bodies, &positions));
+    }
+
+    #[test]
+    fn a_drag_chain_reports_every_neighbour_it_physically_moves() {
+        // Every landmark the swept drag moves must be committed by the caller,
+        // otherwise a pushed neighbour would later snap back to its old home.
+        let grabbed = body(1, BodyKind::Node, 0.0);
+        let pushed = body(2, BodyKind::Node, 25.0);
+        let bodies = vec![grabbed, pushed];
+        let start = bodies
+            .iter()
+            .map(|body| (body.id, body.pos))
+            .collect::<HashMap<_, _>>();
+        let positions = solve_static_swept(bodies, NodeId::new(1), Vec2 { x: 600.0, y: 0.0 });
+
+        let moved = start
+            .into_iter()
+            .filter(|(id, from)| {
+                let to = positions[id];
+                (to.x - from.x).abs() > LANDMARK_POSITION_EPSILON
+                    || (to.y - from.y).abs() > LANDMARK_POSITION_EPSILON
+            })
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        assert_eq!(moved.len(), 2);
+        assert!(moved.contains(&NodeId::new(1)));
+        assert!(moved.contains(&NodeId::new(2)));
     }
 
     #[test]

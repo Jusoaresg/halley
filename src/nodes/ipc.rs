@@ -376,6 +376,8 @@ fn move_node<D: crate::session::SessionDriver>(
         if let Some(node) = session.nodes.field.node_mut(id) {
             node.pos = destination;
         }
+        // A discrete move is an explicit placement, not a reversible zoom offset.
+        session.nodes.commit_zoom_home(id);
         session.nodes.start_landmark_slide(
             id,
             current,

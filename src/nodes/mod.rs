@@ -35,7 +35,7 @@ pub use session_ops::{
 pub(crate) use session_ops::{
     displace_landmarks_for_new_window, move_cluster_core_rigid, move_grabbed_body_rigid,
     reconcile_landmarks_for_zoom, resolve_new_cluster_core, restore_for_cluster_join,
-    set_collapsed_output, tick_physics,
+    restore_landmarks_for_zoom, set_collapsed_output, tick_physics,
 };
 
 const OUTSIDE_THRESHOLD: f32 = 0.90;
@@ -154,6 +154,11 @@ pub struct NodesState {
     physics_last_tick: Duration,
     release_locks: HashMap<NodeId, Duration>,
     ring_preview_until: HashMap<String, Duration>,
+    /// Positions a landmark held before camera zoom displaced it. Zooming back
+    /// in may return the landmark home; any physical or explicit move rebases
+    /// the position permanently. Runtime-only: never configured, sent over IPC,
+    /// or written into persisted cluster metadata.
+    zoom_homes: HashMap<NodeId, Vec2>,
 }
 
 impl NodesState {
@@ -192,6 +197,7 @@ impl NodesState {
             physics_last_tick: crate::frame_clock::monotonic_now(),
             release_locks: HashMap::new(),
             ring_preview_until: HashMap::new(),
+            zoom_homes: HashMap::new(),
         }
     }
 
@@ -298,6 +304,9 @@ impl NodesState {
         let output = crate::wayland::window_output_name(&window).unwrap_or_default();
         let (title, app_id) = metadata(&window);
         if let Some(id) = self.by_surface.get(surface).copied() {
+            // A re-mapped node is placed from live client geometry, so a home
+            // remembered from before the unmap no longer describes it.
+            self.commit_zoom_home(id);
             if let Some(record) = self.records.get_mut(&id) {
                 record.window = window;
                 record.output = output;
@@ -381,6 +390,7 @@ impl NodesState {
         }
         let _ = self.field.set_detached(id, true);
         self.release_locks.remove(&id);
+        self.zoom_homes.remove(&id);
         self.decay.remove(id);
         if self.focused == Some(id) {
             self.focused = None;
@@ -399,6 +409,7 @@ impl NodesState {
         self.landmark_slides.borrow_mut().remove(&id);
         self.physics_velocity.remove(&id);
         self.release_locks.remove(&id);
+        self.zoom_homes.remove(&id);
         self.decay.remove(id);
         self.last_focus_ms.remove(&id);
         if self.focused == Some(id) {
@@ -497,6 +508,33 @@ impl NodesState {
         self.landmark_slides.borrow_mut().remove(&id);
         self.physics_velocity.remove(&id);
         self.release_locks.remove(&id);
+        // Explicit interaction, pinning, and output changes make the displayed
+        // landmark position authoritative instead of a reversible zoom offset.
+        self.zoom_homes.remove(&id);
+    }
+
+    /// Records where a landmark sat before camera zoom displaced it. Later
+    /// zoom-out steps reflow from the displayed position without replacing the
+    /// home, so one zoom gesture always returns to the same place.
+    pub fn remember_zoom_home(&mut self, id: NodeId, position: Vec2) {
+        self.zoom_homes.entry(id).or_insert(position);
+    }
+
+    pub fn zoom_home(&self, id: NodeId) -> Option<Vec2> {
+        self.zoom_homes.get(&id).copied()
+    }
+
+    /// Makes the current displayed position permanent by discarding the home a
+    /// physical or user-driven move has superseded.
+    pub fn commit_zoom_home(&mut self, id: NodeId) {
+        self.zoom_homes.remove(&id);
+    }
+
+    /// Retires homes for landmarks that no longer exist in the Field, so a
+    /// removed node or dissolved cluster core cannot be restored later.
+    pub fn retire_zoom_homes_without_field_node(&mut self) {
+        self.zoom_homes
+            .retain(|id, _| self.field.node(*id).is_some());
     }
 
     pub fn lock_released_window(&mut self, id: NodeId, now: Duration) {
@@ -1182,6 +1220,71 @@ mod tests {
 
         assert!(nodes.focus(Some(core), 10));
         assert_eq!(nodes.focused(), Some(core));
+    }
+
+    #[test]
+    fn zoom_home_records_only_the_first_zoom_displacement() {
+        let mut nodes = super::NodesState::new(&halley_config::RuntimeConfig::default());
+        let id = nodes.field.spawn_surface(
+            "landmark",
+            Vec2 { x: 100.0, y: 40.0 },
+            Vec2 { x: 48.0, y: 48.0 },
+        );
+        let home = Vec2 { x: 100.0, y: 40.0 };
+
+        nodes.remember_zoom_home(id, home);
+        // A second zoom-out step moves the landmark again but must not replace
+        // the home the first step recorded.
+        nodes.remember_zoom_home(id, Vec2 { x: 300.0, y: 40.0 });
+
+        assert_eq!(nodes.zoom_home(id), Some(home));
+    }
+
+    #[test]
+    fn explicit_landmark_motion_commits_the_remembered_zoom_home() {
+        let mut nodes = super::NodesState::new(&halley_config::RuntimeConfig::default());
+        let dragged = nodes.field.spawn_surface(
+            "dragged",
+            Vec2 { x: 100.0, y: 40.0 },
+            Vec2 { x: 48.0, y: 48.0 },
+        );
+        let pushed = nodes.field.spawn_surface(
+            "pushed",
+            Vec2 { x: 200.0, y: 40.0 },
+            Vec2 { x: 48.0, y: 48.0 },
+        );
+        nodes.remember_zoom_home(dragged, Vec2 { x: 0.0, y: 0.0 });
+        nodes.remember_zoom_home(pushed, Vec2 { x: 90.0, y: 0.0 });
+
+        // Pinning, output transfer, and drag start all route through this.
+        nodes.clear_direct_motion(dragged);
+        nodes.commit_zoom_home(pushed);
+
+        assert_eq!(nodes.zoom_home(dragged), None);
+        assert_eq!(nodes.zoom_home(pushed), None);
+    }
+
+    #[test]
+    fn a_disappearing_landmark_retires_its_zoom_home() {
+        let mut nodes = super::NodesState::new(&halley_config::RuntimeConfig::default());
+        let surviving = nodes.field.spawn_surface(
+            "surviving",
+            Vec2 { x: 100.0, y: 40.0 },
+            Vec2 { x: 48.0, y: 48.0 },
+        );
+        let removed = nodes.field.spawn_surface(
+            "removed",
+            Vec2 { x: 200.0, y: 40.0 },
+            Vec2 { x: 48.0, y: 48.0 },
+        );
+        nodes.remember_zoom_home(surviving, Vec2 { x: 100.0, y: 40.0 });
+        nodes.remember_zoom_home(removed, Vec2 { x: 200.0, y: 40.0 });
+
+        assert!(nodes.field.remove(removed).is_some());
+        nodes.retire_zoom_homes_without_field_node();
+
+        assert_eq!(nodes.zoom_home(removed), None);
+        assert_eq!(nodes.zoom_home(surviving), Some(Vec2 { x: 100.0, y: 40.0 }));
     }
 
     #[test]

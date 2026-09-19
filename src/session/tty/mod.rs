@@ -1128,8 +1128,12 @@ fn redraw_output(app: &mut TtyApp, output: &Output, loop_handle: &LoopHandle<'_,
     let camera_animating = zoom_tick.is_some_and(|(animating, _)| animating);
     let edge_pan_animating = super::input::grabbed_window_edge_pan_active_on(app, &output.name());
     if let Some((before, after)) = zoom_tick.and_then(|(_, scales)| scales) {
-        if after < before && app.clusters.active_on(&output.name()).is_none() {
-            crate::nodes::reconcile_landmarks_for_zoom(app, &output.name(), after);
+        if app.clusters.active_on(&output.name()).is_none() {
+            if after < before {
+                crate::nodes::reconcile_landmarks_for_zoom(app, &output.name(), after);
+            } else {
+                crate::nodes::restore_landmarks_for_zoom(app, &output.name(), after);
+            }
         }
         app.shell.overlays.show_zoom_indicator(
             &output.name(),
