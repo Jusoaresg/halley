@@ -269,9 +269,11 @@ action string is a command line, so replacing one line is enough:
 "$var.mod+d" "fuzzel"
 ```
 
-Existing configurations keep whatever launcher they already bind. Only a newly
-generated config defaults to Halley Lift, and config migration never rewrites a
-launcher binding.
+Existing 0.6-or-newer configurations keep whatever launcher they already bind.
+Only a newly generated config defaults to Halley Lift, and routine structural
+migration does not rewrite a launcher binding. Migrating an incompatible
+pre-0.6 config is the exception: after making a timestamped backup, Halley
+replaces that file with the current default config.
 
 ---
 
@@ -284,10 +286,12 @@ On first launch Halley creates
 an existing config, and configs need no version marker. Optional compatibility
 updates are explicit and structurally detected: use `halleyctl config migrate
 --dry-run` to inspect them before running `halleyctl config migrate`. Migration
-adds only a finite set of known missing bindings or sections, skips conflicting
-custom chords, validates the complete candidate, writes atomically, and retains
-a timestamped backup. A gathered root reports that the file owning the affected
-section must be migrated directly rather than guessing where to write.
+adds only a finite set of known missing bindings or sections to compatible
+0.6-or-newer configs, skips conflicting custom chords, validates the complete
+candidate, writes atomically, and retains a timestamped backup. An incompatible
+pre-0.6 config is instead backed up and replaced with the current default. A
+gathered root reports that the file owning the affected section must be migrated
+directly rather than guessing where to write.
 
 Pass `-c PATH` or `--config PATH` to select another file. Valid edits reload as
 one atomic snapshot; invalid edits leave the last valid runtime state active.

@@ -22,12 +22,19 @@ already running. Halley launches it as an ordinary command line with the session
 environment, so no arguments or environment variables are required and the whole
 integration is one line in the `keybinds` section.
 
-Existing configurations are never rewritten, so a config that already binds
-another launcher keeps it. Switching either way is a one-line edit:
+Startup never rewrites an existing configuration, and routine structural
+migration preserves launcher bindings in 0.6-or-newer configs. (Explicitly
+migrating an incompatible pre-0.6 config backs it up and installs the current
+default.) Keep exactly one launcher on `Mod+D`. To use the bundled launcher:
 
 ```rune
-"$var.mod+d" "halley-lift"   # bundled launcher
-"$var.mod+d" "fuzzel"        # Fuzzel, or any other launcher command line
+"$var.mod+d" "halley-lift"
+```
+
+To use Fuzzel, replace that line with:
+
+```rune
+"$var.mod+d" "fuzzel"
 ```
 
 Halley owns that keybind and Lift owns its own window and appearance in
