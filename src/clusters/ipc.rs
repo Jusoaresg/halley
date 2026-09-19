@@ -228,10 +228,14 @@ pub fn handle_request<D: crate::session::SessionDriver>(
                 .outputs()
                 .find(|candidate| candidate.name() == owned_output)
                 .cloned();
-            if session
-                .clusters
-                .activate(&owned_output, id, crate::frame_clock::monotonic_now())
-            {
+            // `activate_only` is the idempotent form; the already-active case
+            // returned above, so `Open` never toggled a workspace closed and
+            // this preserves the existing behaviour exactly.
+            if session.clusters.activate_only(
+                &owned_output,
+                id,
+                crate::frame_clock::monotonic_now(),
+            ) {
                 if let Some(output_handle) = output_handle {
                     crate::session::sync_cluster_activation_focus(
                         session,

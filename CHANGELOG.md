@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Advertise the staging `ext-workspace-v1` global, so taskbars, docks, and
+  scripts can enumerate Halley's clusters per output and activate or deactivate
+  them. One workspace group is published per mapped output, clusters stay
+  visible while collapsed, and requests are applied atomically at `commit` so a
+  re-sent "activate" cannot close the workspace it highlights. See
+  `docs/ext-workspace-v1.md`.
 - Advertise `zwp_text_input_manager_v3` and `zwp_input_method_manager_v2` so
   Wayland IMEs (fcitx/ibus) can compose into native apps. X11 apps are unchanged.
 - Allow modifier-dragging standalone X11 normal/utility pop-outs in screen

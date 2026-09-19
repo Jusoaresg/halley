@@ -254,6 +254,7 @@ impl<D: SessionDriver> Session<D> {
             DataDeviceState::new::<Self>(&display_handle),
             primary_selection_state,
             ext_data_control_state,
+            crate::wayland::ext_workspace::State::new::<Self>(&display_handle),
         )
     }
 

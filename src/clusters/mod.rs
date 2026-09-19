@@ -528,6 +528,76 @@ impl ClusterSystem {
         true
     }
 
+    /// Activates `id` on `output` when it is not already the active cluster.
+    ///
+    /// This is the idempotent counterpart of [`ClusterSystem::activate`], which
+    /// toggles an already-active workspace closed. External controllers (the
+    /// `ext-workspace-v1` global, scripts, and future automation) ask for a
+    /// workspace to *be* active, so repeating the request must not close it,
+    /// restart its transition, or move focus again.
+    ///
+    /// Returns whether the activation state changed. A missing cluster or a
+    /// cluster owned by another output is rejected without mutation.
+    pub fn activate_only(&mut self, output: &str, id: ClusterId, now: Duration) -> bool {
+        if self
+            .metadata
+            .get(&id)
+            .is_none_or(|metadata| metadata.output != output)
+        {
+            return false;
+        }
+        if self.active_on(output) == Some(id) {
+            return false;
+        }
+        self.close_bloom(output, now);
+        self.set_hovered_core(None, now);
+        self.hide_overflow(output);
+        if let Some(previous) = self.active.insert(output.to_string(), id) {
+            self.registry.deactivate_cluster_workspace(previous);
+        }
+        self.registry.activate_cluster_workspace(id);
+        self.overflow.reveal(output, now);
+        self.begin_transition(output, id, transition::TransitionKind::Opening, now);
+        true
+    }
+
+    /// Deactivates `output` only when `id` is the cluster currently active
+    /// there.
+    ///
+    /// Returns whether the activation state changed. Deactivating an inactive
+    /// cluster, or a cluster owned by a different output, leaves every other
+    /// clique's active selection untouched instead of clearing it.
+    pub fn deactivate_only(&mut self, output: &str, id: ClusterId, now: Duration) -> bool {
+        if self.active_on(output) != Some(id) {
+            return false;
+        }
+        if self
+            .metadata
+            .get(&id)
+            .is_none_or(|metadata| metadata.output != output)
+        {
+            return false;
+        }
+        self.close_bloom(output, now);
+        self.set_hovered_core(None, now);
+        self.hide_overflow(output);
+        self.active.remove(output);
+        self.registry.deactivate_cluster_workspace(id);
+        self.begin_transition(output, id, transition::TransitionKind::Closing, now);
+        true
+    }
+
+    /// Deactivates whatever cluster is currently active on `output`, leaving
+    /// the output in "Field" (no workspace active) mode.
+    ///
+    /// Returns whether the activation state changed.
+    pub fn deactivate_output(&mut self, output: &str, now: Duration) -> bool {
+        let Some(id) = self.active_on(output) else {
+            return false;
+        };
+        self.deactivate_only(output, id, now)
+    }
+
     pub fn is_member(&self, id: NodeId) -> bool {
         self.registry.is_cluster_member(id)
     }
@@ -2910,5 +2980,135 @@ mod tests {
         };
         assert!(rect.loc.x < target.x.round() as i32);
         assert_eq!(depth, 2);
+    }
+
+    fn create_cluster(
+        field: &mut Field,
+        system: &mut ClusterSystem,
+        output: &str,
+        label: &str,
+        members: usize,
+    ) -> ClusterId {
+        assert!(system.begin_creation(output.to_string()));
+        for index in 0..members {
+            let member = field.spawn_surface(
+                format!("{label}-{index}"),
+                Vec2 { x: 40.0, y: 40.0 },
+                Vec2 { x: 200.0, y: 150.0 },
+            );
+            assert!(system.toggle_creation_member(member, output));
+        }
+        assert!(system.begin_naming());
+        system.finish_creation(field).unwrap()
+    }
+
+    fn two_clusters_on_one_output() -> (Field, ClusterSystem, ClusterId, ClusterId) {
+        let mut field = Field::new();
+        let mut system = ClusterSystem::new(
+            halley_config::Clusters::default(),
+            halley_config::ClusterAnimation::default(),
+        );
+        let first = create_cluster(&mut field, &mut system, "DP-1", "first", 1);
+        let second = create_cluster(&mut field, &mut system, "DP-1", "second", 1);
+        (field, system, first, second)
+    }
+
+    #[test]
+    fn repeated_activation_does_not_toggle_a_workspace_closed() {
+        let (_field, mut system, cluster, _) =
+            active_test_cluster(2, ClusterWorkspaceLayoutKind::Tiling);
+        assert_eq!(system.active_on("DP-1"), Some(cluster));
+
+        // `activate` toggles an already-active workspace closed; `activate_only`
+        // must leave it open so a repeated protocol request is idempotent.
+        assert!(!system.activate_only("DP-1", cluster, Duration::ZERO));
+        assert_eq!(system.active_on("DP-1"), Some(cluster));
+
+        assert!(system.activate("DP-1", cluster, Duration::ZERO));
+        assert_eq!(system.active_on("DP-1"), None);
+    }
+
+    #[test]
+    fn deactivating_an_inactive_cluster_leaves_the_active_one_alone() {
+        let (_field, mut system, first, second) = two_clusters_on_one_output();
+        assert!(system.activate_only("DP-1", first, Duration::ZERO));
+        assert!(!system.activate_only("DP-1", first, Duration::ZERO));
+
+        assert!(!system.deactivate_only("DP-1", second, Duration::ZERO));
+        assert_eq!(
+            system.active_on("DP-1"),
+            Some(first),
+            "deactivating an inactive workspace must not clear the active one"
+        );
+
+        assert!(system.deactivate_only("DP-1", first, Duration::ZERO));
+        assert_eq!(system.active_on("DP-1"), None);
+        assert!(!system.deactivate_only("DP-1", first, Duration::ZERO));
+    }
+
+    #[test]
+    fn activation_helpers_reject_a_foreign_output_without_mutation() {
+        let (_field, mut system, cluster, _) =
+            active_test_cluster(2, ClusterWorkspaceLayoutKind::Tiling);
+
+        assert!(!system.activate_only("DP-2", cluster, Duration::ZERO));
+        assert_eq!(system.active_on("DP-2"), None);
+        assert_eq!(system.active_on("DP-1"), Some(cluster));
+
+        assert!(!system.deactivate_only("DP-2", cluster, Duration::ZERO));
+        assert_eq!(system.active_on("DP-1"), Some(cluster));
+
+        assert!(system.deactivate_output("DP-1", Duration::ZERO));
+        assert_eq!(system.active_on("DP-1"), None);
+        assert!(!system.deactivate_output("DP-1", Duration::ZERO));
+    }
+
+    #[test]
+    fn an_empty_cluster_stays_enumerable_and_activatable() {
+        // Losing the last member window leaves the workspace published but
+        // empty, so the protocol must still enumerate and switch it. This is how
+        // "Field" clusters reach a taskbar.
+        let (mut field, mut system, cluster, members) =
+            active_test_cluster(1, ClusterWorkspaceLayoutKind::Tiling);
+        assert!(system.deactivate_output("DP-1", Duration::ZERO));
+        assert!(system.forget_destroyed_member(&mut field, members[0]));
+
+        assert!(system.registry().cluster(cluster).is_some());
+        assert!(system.member_ids(cluster).is_empty());
+        assert_eq!(system.first_member(cluster), None);
+        assert_eq!(
+            system
+                .clusters_for_output("DP-1")
+                .map(|(slot, id, _)| (slot, id))
+                .collect::<Vec<_>>(),
+            vec![(1, cluster)],
+            "an empty workspace is still published"
+        );
+
+        assert!(system.activate_only("DP-1", cluster, Duration::ZERO));
+        assert_eq!(system.active_on("DP-1"), Some(cluster));
+        assert!(system.deactivate_output("DP-1", Duration::ZERO));
+        assert_eq!(system.active_on("DP-1"), None);
+    }
+
+    #[test]
+    fn per_output_selections_are_independent() {
+        let mut field = Field::new();
+        let mut system = ClusterSystem::new(
+            halley_config::Clusters::default(),
+            halley_config::ClusterAnimation::default(),
+        );
+        let left = create_cluster(&mut field, &mut system, "DP-1", "left", 1);
+        let right = create_cluster(&mut field, &mut system, "DP-2", "right", 1);
+
+        assert!(system.activate_only("DP-1", left, Duration::ZERO));
+        assert!(system.activate_only("DP-2", right, Duration::ZERO));
+        assert!(!system.deactivate_only("DP-1", right, Duration::ZERO));
+        assert_eq!(system.active_on("DP-1"), Some(left));
+        assert_eq!(system.active_on("DP-2"), Some(right));
+
+        assert!(system.deactivate_output("DP-2", Duration::ZERO));
+        assert_eq!(system.active_on("DP-1"), Some(left));
+        assert_eq!(system.active_on("DP-2"), None);
     }
 }

@@ -3,6 +3,7 @@ pub mod compositor;
 pub mod decoration;
 pub mod dmabuf;
 pub mod dnd;
+pub mod ext_workspace;
 pub mod focus;
 pub mod frame_callbacks;
 pub mod fullscreen;
@@ -246,6 +247,10 @@ pub struct WaylandState {
     /// protocol. It shares the same seat selections as wl_data_device and
     /// primary-selection instead of buffering a second clipboard in Halley.
     pub ext_data_control_state: DataControlState,
+    /// Staging `ext-workspace-v1`. Every manager binding, group handle, and
+    /// workspace handle the compositor has advertised lives here; the cluster
+    /// model itself stays in `Session::clusters`.
+    pub ext_workspace_state: ext_workspace::State,
     /// Tracks popup trees once for both xdg-toplevel and layer-shell roots.
     /// Rendering and input can then ask Smithay for the same canonical tree
     /// instead of each subsystem inventing its own parent/offset bookkeeping.
@@ -322,6 +327,7 @@ impl WaylandState {
         data_device_state: DataDeviceState,
         primary_selection_state: PrimarySelectionState,
         ext_data_control_state: DataControlState,
+        ext_workspace_state: ext_workspace::State,
     ) -> Self {
         Self {
             display_handle,
@@ -355,6 +361,7 @@ impl WaylandState {
             dnd_icon: None,
             primary_selection_state,
             ext_data_control_state,
+            ext_workspace_state,
             popup_manager: PopupManager::default(),
             space: Space::default(),
             managed_windows: crate::window::ManagedWindowStack::default(),

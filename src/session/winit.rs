@@ -813,6 +813,10 @@ pub fn run(explicit_config_path: Option<std::path::PathBuf>) {
             .dispatch(None, &mut app)
             .expect("event loop dispatch failed");
         crate::ipc::publish_api_events(&mut app);
+        // Every cluster mutation in this iteration - keyboard or pointer
+        // activation, IPC, creation, dissolution, output changes - is published
+        // here rather than at each mutation site.
+        super::workspace::sync_ext_workspace(&mut app);
         let _ = app.wayland.display_handle.flush_clients();
     }
 }

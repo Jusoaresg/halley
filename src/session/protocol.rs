@@ -12,10 +12,18 @@ use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode;
 use smithay::reexports::wayland_protocols::wp::linux_drm_syncobj::v1::server::wp_linux_drm_syncobj_surface_v1::WpLinuxDrmSyncobjSurfaceV1;
+use smithay::reexports::wayland_protocols::ext::workspace::v1::server::{
+    ext_workspace_group_handle_v1::{self, ExtWorkspaceGroupHandleV1},
+    ext_workspace_handle_v1::{self, ExtWorkspaceHandleV1},
+    ext_workspace_manager_v1::{self, ExtWorkspaceManagerV1},
+};
 use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
+use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
 use smithay::reexports::wayland_server::protocol::wl_seat::WlSeat;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::reexports::wayland_server::{Client, Display, Resource};
+use smithay::reexports::wayland_server::{
+    Client, DataInit, Dispatch, Display, DisplayHandle, GlobalDispatch, New, Resource,
+};
 use smithay::utils::{Logical, Point, SERIAL_COUNTER, Serial, Size};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::tablet_manager::TabletSeatHandler;
@@ -73,6 +81,7 @@ use smithay::{
 };
 
 use super::state::{Session, SessionDriver};
+use crate::wayland::ext_workspace::{self, GroupData, WorkspaceData};
 use crate::wayland::{self, ClientState};
 
 const XDG_ACTIVATION_TOKEN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -1225,7 +1234,156 @@ impl<D: SessionDriver> IdleNotifierHandler for Session<D> {
     }
 }
 
-impl<D: SessionDriver> OutputHandler for Session<D> {}
+impl<D: SessionDriver> OutputHandler for Session<D> {
+    /// A `wl_output` bound after the workspace manager must still learn which
+    /// existing workspace group already owns that output.
+    fn output_bound(&mut self, output: Output, wl_output: WlOutput) {
+        if let Some(client) = wl_output.client() {
+            self.wayland
+                .ext_workspace_state
+                .output_bound(&client, &output, &wl_output);
+        }
+    }
+}
+
+impl<D: SessionDriver> GlobalDispatch<ExtWorkspaceManagerV1, (), Session<D>> for Session<D> {
+    fn bind(
+        session: &mut Session<D>,
+        display: &DisplayHandle,
+        client: &Client,
+        resource: New<ExtWorkspaceManagerV1>,
+        _global_data: &(),
+        data_init: &mut DataInit<'_, Session<D>>,
+    ) {
+        // The snapshot is materialised before the protocol state is borrowed
+        // mutably, so advertising on bind never holds a borrow of the model.
+        let snapshot = super::workspace::snapshot(session);
+        ext_workspace::init_manager::<Session<D>>(
+            &mut session.wayland.ext_workspace_state,
+            display,
+            client,
+            resource,
+            data_init,
+            &snapshot,
+        );
+    }
+}
+
+impl<D: SessionDriver> Dispatch<ExtWorkspaceManagerV1, (), Session<D>> for Session<D> {
+    fn request(
+        session: &mut Session<D>,
+        client: &Client,
+        manager: &ExtWorkspaceManagerV1,
+        request: ext_workspace_manager_v1::Request,
+        _data: &(),
+        _display: &DisplayHandle,
+        _data_init: &mut DataInit<'_, Session<D>>,
+    ) {
+        // A stopped manager has no binding left, and the protocol forbids
+        // requests after `stop`; ignore rather than raise a compositor error.
+        let Some(binding) = session
+            .wayland
+            .ext_workspace_state
+            .binding_of(&client.id(), manager)
+        else {
+            return;
+        };
+        let plan = ext_workspace::manager_request(
+            &mut session.wayland.ext_workspace_state,
+            binding,
+            request,
+            |id| {
+                session
+                    .clusters
+                    .metadata(id)
+                    .map(|metadata| metadata.output.clone())
+            },
+            |output| session.clusters.active_on(output),
+        );
+        if let Some(plan) = plan {
+            super::workspace::apply_transaction(session, plan);
+        }
+    }
+
+    fn destroyed(
+        session: &mut Session<D>,
+        client: smithay::reexports::wayland_server::backend::ClientId,
+        manager: &ExtWorkspaceManagerV1,
+        _data: &(),
+    ) {
+        // Also runs for every object of a client that disconnects.
+        if let Some(binding) = session
+            .wayland
+            .ext_workspace_state
+            .binding_of(&client, manager)
+        {
+            session.wayland.ext_workspace_state.remove_binding(binding);
+        }
+    }
+}
+
+impl<D: SessionDriver> Dispatch<ExtWorkspaceGroupHandleV1, GroupData, Session<D>> for Session<D> {
+    fn request(
+        session: &mut Session<D>,
+        _client: &Client,
+        handle: &ExtWorkspaceGroupHandleV1,
+        request: ext_workspace_group_handle_v1::Request,
+        data: &GroupData,
+        _display: &DisplayHandle,
+        _data_init: &mut DataInit<'_, Session<D>>,
+    ) {
+        ext_workspace::group_request(
+            &mut session.wayland.ext_workspace_state,
+            data.binding,
+            handle,
+            request,
+        );
+    }
+
+    fn destroyed(
+        session: &mut Session<D>,
+        _client: smithay::reexports::wayland_server::backend::ClientId,
+        handle: &ExtWorkspaceGroupHandleV1,
+        data: &GroupData,
+    ) {
+        session
+            .wayland
+            .ext_workspace_state
+            .group_destroyed(data.binding, handle);
+    }
+}
+
+impl<D: SessionDriver> Dispatch<ExtWorkspaceHandleV1, WorkspaceData, Session<D>> for Session<D> {
+    fn request(
+        session: &mut Session<D>,
+        _client: &Client,
+        handle: &ExtWorkspaceHandleV1,
+        request: ext_workspace_handle_v1::Request,
+        data: &WorkspaceData,
+        _display: &DisplayHandle,
+        _data_init: &mut DataInit<'_, Session<D>>,
+    ) {
+        ext_workspace::workspace_request(
+            &mut session.wayland.ext_workspace_state,
+            data.binding,
+            handle,
+            data.cluster,
+            request,
+        );
+    }
+
+    fn destroyed(
+        session: &mut Session<D>,
+        _client: smithay::reexports::wayland_server::backend::ClientId,
+        handle: &ExtWorkspaceHandleV1,
+        data: &WorkspaceData,
+    ) {
+        session
+            .wayland
+            .ext_workspace_state
+            .workspace_destroyed(data.binding, handle);
+    }
+}
 
 impl<D: SessionDriver> FractionalScaleHandler for Session<D> {
     fn new_fractional_scale(&mut self, surface: WlSurface) {

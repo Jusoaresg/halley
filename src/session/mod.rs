@@ -36,6 +36,7 @@ pub(crate) mod trace;
 #[cfg(not(feature = "xwayland"))]
 #[path = "trace_disabled.rs"]
 pub(crate) mod trace;
+pub(crate) mod workspace;
 
 pub mod environment;
 pub mod tty;
